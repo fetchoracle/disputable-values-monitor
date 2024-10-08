@@ -12,6 +12,8 @@ The Disputable Values Monitor is a tool that anyone can use to:
 
 ## Setup
 
+!Run 'source vars.sh' before running DVM to load the Discord variables!
+
 ### Prerequisites:
 - A discord server where you can create a channel and a bot for recieving alerts sent by the Disputable Values Monitor via webhook. See the "Making a Webhook" section of the Discord documentation [here](https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks/).
 - Install Python 3.9 and/or verify that it is the current version:
