@@ -93,7 +93,7 @@ async def start(
 ) -> None:
     """Start the CLI dashboard."""
     cfg = TelliotConfig()
-    cfg.main.chain_id = 1
+    cfg.main.chain_id = 943 #chain_id to select account to dispute
     disp_cfg = AutoDisputerConfig(is_disputing=is_disputing, confidence_flag=confidence_threshold)
     print_title_info()
 
