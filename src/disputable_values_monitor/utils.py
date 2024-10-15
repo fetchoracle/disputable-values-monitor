@@ -101,9 +101,9 @@ def get_logger(name: str) -> logging.Logger:
     should be the current file name. For example:
     _ = get_logger(name=__name__)
     """
-    log_format = "%(levelname)-7s | %(name)s | %(message)s"
-    fh = logging.FileHandler("log.txt")
-    formatter = logging.Formatter(log_format)
+    log_format = "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s"
+    fh = logging.FileHandler("dvmLogs.txt")
+    formatter = logging.Formatter(log_format, datefmt="%Y-%m-%d %H:%M:%S")
     fh.setFormatter(formatter)
     logger = logging.getLogger(name)
     logger.addHandler(fh)
