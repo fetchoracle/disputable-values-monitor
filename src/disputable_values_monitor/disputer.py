@@ -84,7 +84,7 @@ async def dispute(
         logger.error(f"Unable to calculate Dispute Fee from contracts on chain_id {new_report.chain_id}")
         return ""
 
-    logger.info(f"Dispute Fee on chain_id {new_report.chain_id}: " + str(dispute_fee / 1e18) + " TRB")
+    logger.info(f"Dispute Fee on chain_id {new_report.chain_id}: " + str(dispute_fee / 1e18) + " TRB(PLS on Pulsechain)")
 
     # if balanceOf(user) < disputeFee, log "need more tokens to initiate dispute"
     if user_token_balance < dispute_fee:

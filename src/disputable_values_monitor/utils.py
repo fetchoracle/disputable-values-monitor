@@ -85,6 +85,7 @@ def select_account(cfg: TelliotConfig, account: Optional[str]) -> Optional[Chain
             new_account = setup_account(cfg.main.chain_id)
             if new_account is not None:
                 click.echo(f"{new_account.name} selected!")
+                new_account.unlock()
                 return new_account
             return None
         else:
@@ -101,9 +102,9 @@ def get_logger(name: str) -> logging.Logger:
     should be the current file name. For example:
     _ = get_logger(name=__name__)
     """
-    log_format = "%(levelname)-7s | %(name)s | %(message)s"
-    fh = logging.FileHandler("log.txt")
-    formatter = logging.Formatter(log_format)
+    log_format = "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s"
+    fh = logging.FileHandler("dvmLog.txt")
+    formatter = logging.Formatter(log_format, datefmt="%Y-%m-%d %H:%M:%S")
     fh.setFormatter(formatter)
     logger = logging.getLogger(name)
     logger.addHandler(fh)

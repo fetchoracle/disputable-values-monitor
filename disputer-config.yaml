@@ -4,7 +4,7 @@ feeds: # please reference https://github.com/tellor-io/dataSpecs/tree/main/types
   - query_id: "0x83245f6a6a2f6458558a706270fbcc35ac3a81917602c1313d3bfa998dcc2d4b"
     threshold:
       type: Percentage
-      amount: 0.1 # 10%
+      amount: 0.1 # 0.1 = 10%
 #BTC/USD
 #  - query_id: "0xa6f013ee236804827b77696d350e9f0ac3e879328f2a3021d473a0b778ad78ac"
 #    threshold:
