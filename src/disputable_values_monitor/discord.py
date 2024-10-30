@@ -1,11 +1,18 @@
 """Send text messages using Twilio."""
 import os
 from typing import Any
+from dotenv import load_dotenv
+
+load_dotenv()
 
 import click
 from discordwebhook import Discord
 
 from disputable_values_monitor import ALWAYS_ALERT_QUERY_TYPES
+
+from disputable_values_monitor.utils import get_logger
+
+logger = get_logger(__name__)
 
 
 def generic_alert(msg: str) -> None:
@@ -29,12 +36,17 @@ def get_alert_bot_2() -> Discord:
 
 def get_alert_bot_3() -> Discord:
     return Discord(url=os.getenv("DISCORD_WEBHOOK_URL_3"))
+    
+def token_balance_alert(msg: str) -> None:
+    """send an alert when FETCH or PLS are below the threshold"""
+    send_discord_msg(msg)
+    logger.info("Token balance alert sent")
+    return
 
 
 def dispute_alert(msg: str) -> None:
     """send an alert that the dispute was successful to the user"""
     send_discord_msg(msg)
-    print(msg)
     return
 
 

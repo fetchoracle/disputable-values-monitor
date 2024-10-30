@@ -3,6 +3,11 @@ import logging
 import warnings
 from time import sleep
 
+from decimal import *
+import os
+
+from web3 import Web3
+
 import click
 import pandas as pd
 from chained_accounts import ChainedAccount
@@ -26,6 +31,35 @@ from disputable_values_monitor.utils import get_logger
 from disputable_values_monitor.utils import get_tx_explorer_url
 from disputable_values_monitor.utils import select_account
 from disputable_values_monitor.utils import Topics
+
+from disputable_values_monitor.data import get_fetch_balance, get_pls_balance
+from disputable_values_monitor.utils import get_env_reporters_balance_threshold, get_reporters
+from disputable_values_monitor.utils import create_async_task
+from disputable_values_monitor.utils import fetch_dashboard
+from disputable_values_monitor.discord import token_balance_alert
+
+reporters: list[str] = get_reporters()
+
+def get_reporters_balance_threshold(reporters: list[str], env_variable_name: str):
+    reporters_threshold: list[int] = get_env_reporters_balance_threshold(env_variable_name=env_variable_name)
+    return {reporter: Decimal(reporter_threshold) for reporter, reporter_threshold in zip(reporters, reporters_threshold)}
+
+ReportersBalance = dict[str, tuple[Decimal, bool]]
+ReportersBalanceThreshold = dict[str, Decimal]
+
+reporters_pls_balance: ReportersBalance = dict()
+reporters_pls_balance_threshold: ReportersBalanceThreshold = get_reporters_balance_threshold(
+    reporters=reporters,
+    env_variable_name="REPORTERS_PLS_BALANCE_THRESHOLD"
+)
+
+reporters_fetch_balance: ReportersBalance = dict()
+reporters_fetch_balance_threshold: ReportersBalanceThreshold = get_reporters_balance_threshold(
+    reporters=reporters,
+    env_variable_name="REPORTERS_FETCH_BALANCE_THRESHOLD"
+)
+
+disputer_balances: dict[str, tuple[Decimal, bool]] = dict()
 
 warnings.simplefilter("ignore", UserWarning)
 price_aggregator_logger = logging.getLogger("telliot_feeds.sources.price_aggregator")
@@ -93,7 +127,7 @@ async def start(
 ) -> None:
     """Start the CLI dashboard."""
     cfg = TelliotConfig()
-    cfg.main.chain_id = 943 #chain_id to select account to dispute
+    cfg.main.chain_id = int(os.getenv("NETWORK_ID", "943")) #chain_id to select account to dispute
     disp_cfg = AutoDisputerConfig(is_disputing=is_disputing, confidence_flag=confidence_threshold)
     print_title_info()
 
@@ -104,7 +138,9 @@ async def start(
     account: ChainedAccount = select_account(cfg, account_name)
 
     if account and is_disputing:
-        click.echo("...Now with auto-disputing!")
+        click.echo("...you're now auto-disputing!")
+    else:
+        click.echo("...you're NOT auto-disputing. Use -d if you want to enable auto dispute")
 
     display_rows = []
     displayed_events = set()
@@ -129,13 +165,54 @@ async def start(
             cfg=cfg,
             # addresses are for token contract
             chain_addy={
-                1: "0x88dF592F8eb5D7Bd38bFeF7dEb0fBc02cf3778a0",
-                11155111: "0x80fc34a2f9FfE86F41580F47368289C402DEc660",
+                #1: "0x88dF592F8eb5D7Bd38bFeF7dEb0fBc02cf3778a0",
+                #11155111: "0x80fc34a2f9FfE86F41580F47368289C402DEc660",
             },
             topics=[[Topics.NEW_ORACLE_ADDRESS], [Topics.NEW_PROPOSED_ORACLE_ADDRESS]],
             inital_block_offset=initial_block_offset,
         )
         event_lists += tellor360_events + tellor_flex_report_events
+
+        reporters_pls_balance_task = create_async_task(
+            update_reporters_pls_balance,
+            cfg,
+            reporters,
+            reporters_pls_balance
+        )
+        reporters_pls_balance_task.add_done_callback(
+            lambda future_obj: alert_reporters_balance_threshold(
+                reporters_balance=reporters_pls_balance,
+                reporters_balance_threshold=reporters_pls_balance_threshold,
+                asset="PLS"
+            )
+        )
+
+        reporters_fetch_balance_task = create_async_task(
+            update_reporters_fetch_balance,
+            cfg,
+            reporters,
+            reporters_fetch_balance
+        )
+        reporters_fetch_balance_task.add_done_callback(
+            lambda future_obj: alert_reporters_balance_threshold(
+                reporters_balance=reporters_fetch_balance,
+                reporters_balance_threshold=reporters_fetch_balance_threshold,
+                asset="FETCH"
+            )
+        )
+
+        disputer_balances_task = create_async_task(
+            update_disputer_balances,
+            telliot_config=cfg,
+            disputer_account=account,
+            disputer_balances=disputer_balances
+        )
+        disputer_balances_task.add_done_callback(
+            lambda future_obj: alert_on_disputer_balances_threshold(
+                disputer_account=account,
+                disputer_balances=disputer_balances
+            )
+        )        
         for event_list in event_lists:
             # event_list = [(80001, EXAMPLE_NEW_REPORT_EVENT)]
             if not event_list:
@@ -180,7 +257,12 @@ async def start(
                 if is_disputing and new_report.disputable:
                     success_msg = await dispute(cfg, disp_cfg, account, new_report)
                     if success_msg:
-                        dispute_alert(success_msg)
+                        msg = (
+                               f"**Value disputed!**\n" 
+                               f"Check Fetch Dashboard to vote on it: {fetch_dashboard['vote']}\n"
+                               f"{success_msg}"
+                           )
+                        dispute_alert(msg)
 
                 display_rows.append(
                     (
@@ -227,6 +309,124 @@ async def start(
 
         sleep(wait)
 
+async def update_reporters_pls_balance(
+    telliot_config: TelliotConfig,
+    reporters: list[str],
+    reporters_pls_balance: dict[str, tuple[Decimal, bool]],
+):
+    for reporter in reporters:
+        balance = await get_pls_balance(telliot_config, reporter)
+        old_balance, alert_sent = reporters_pls_balance.get(reporter, (0, False))
+        reporters_pls_balance[reporter] = (balance, balance <= reporters_pls_balance_threshold[reporter] and alert_sent)
+
+async def update_reporters_fetch_balance(
+    cfg: TelliotConfig,
+    reporters: list[str],
+    reporters_fetch_balance: dict[str, tuple[Decimal, bool]],
+):
+    for reporter in reporters:
+        old_fetch_balance, alert_sent = reporters_fetch_balance.get(reporter, (0, False))
+        reporter_fetch_balance = await get_fetch_balance(cfg, reporter)
+        reporters_fetch_balance[reporter] = (reporter_fetch_balance, reporter_fetch_balance <= reporters_fetch_balance_threshold[reporter] and alert_sent)
+
+def alert_reporters_balance_threshold(
+    reporters_balance: ReportersBalance,
+    reporters_balance_threshold: ReportersBalanceThreshold,
+    asset: str
+):
+    for reporter, (balance, alert_sent) in reporters_balance.items():
+        if balance >= reporters_balance_threshold[reporter]: continue
+        if alert_sent: continue
+
+        subject = f"DVM ALERT - Reporter {asset} balance threshold met"
+        msg = (
+            f"**Reporter's {asset} balance lower than threshold**\n"
+            f"Reporter's address: {reporter}\n"
+            f"Current {asset} threshold: {reporters_balance_threshold[reporter]:,.2f}\n"
+            f"Current {asset} balance: {balance:,.2f}\n"
+            f"In network ID: {os.getenv('NETWORK_ID', '943')}"
+        )
+        token_balance_alert(msg)
+        reporters_balance[reporter] = (balance, True)
+        
+async def update_disputer_balances(
+    telliot_config: TelliotConfig,
+    disputer_account: ChainedAccount,
+    disputer_balances: dict[str, tuple[Decimal, bool]]
+):
+    if disputer_account is None:
+        return
+    try:
+        disputer_address = Web3.toChecksumAddress(disputer_account.address)
+        old_balance_pls, alert_sent_pls = disputer_balances.get('PLS', (0, False))
+        disputer_pls_balance = await get_pls_balance(telliot_config, disputer_address)
+
+        disputer_pls_balance_threshold = os.getenv("DISPUTER_PLS_BALANCE_THRESHOLD")
+        disputer_fetch_balance_threshold = os.getenv("DISPUTER_FETCH_BALANCE_THRESHOLD")
+
+        disputer_balance_thresholds = {
+            'PLS': Decimal(disputer_pls_balance_threshold) if disputer_pls_balance_threshold is not None else None,
+            'FETCH': Decimal(disputer_fetch_balance_threshold) if disputer_fetch_balance_threshold is not None else None
+        }
+
+        if disputer_balance_thresholds['PLS'] is None:
+            logger.warning("DISPUTER_PLS_BALANCE_THRESHOLD environment variable not set, using old balance to check if alert should be sent")
+            set_alert_sent_pls = disputer_pls_balance == old_balance_pls and alert_sent_pls
+        else:
+            set_alert_sent_pls = disputer_pls_balance <= disputer_balance_thresholds['PLS'] and alert_sent_pls
+
+        
+        disputer_balances['PLS'] = (disputer_pls_balance, set_alert_sent_pls)
+
+        old_balance_fetch, alert_sent_fetch = disputer_balances.get('FETCH', (0, False))
+        disputer_fetch_balance = await get_fetch_balance(telliot_config, disputer_address)
+
+        if disputer_balance_thresholds['FETCH'] is None:
+            logger.warning("DISPUTER_FETCH_BALANCE_THRESHOLD environment variable not set, using old balance to check if alert should be sent")
+            set_alert_sent_fetch = disputer_fetch_balance == old_balance_fetch and alert_sent_fetch
+        else:
+            set_alert_sent_fetch = disputer_fetch_balance <= disputer_balance_thresholds['FETCH'] and alert_sent_fetch
+        
+        disputer_balances['FETCH'] = (disputer_fetch_balance, set_alert_sent_fetch)
+    except Exception as e:
+        logger.error("Error updating disputer balances")
+        logger.error(e)
+
+def alert_on_disputer_balances_threshold(
+    disputer_account: ChainedAccount,
+    disputer_balances: dict[str, tuple[Decimal, bool]]
+):
+    if disputer_account is None:
+        return
+    disputer_pls_balance_threshold = os.getenv("DISPUTER_PLS_BALANCE_THRESHOLD")
+    disputer_fetch_balance_threshold = os.getenv("DISPUTER_FETCH_BALANCE_THRESHOLD")
+
+    disputer_balance_thresholds = {
+        'PLS': Decimal(disputer_pls_balance_threshold) if disputer_pls_balance_threshold is not None else None,
+        'FETCH': Decimal(disputer_fetch_balance_threshold) if disputer_fetch_balance_threshold is not None else None
+    }
+
+    if disputer_balance_thresholds['PLS'] is None:
+        logger.warning("DISPUTER_PLS_BALANCE_THRESHOLD environment variable not set")
+    
+    if disputer_balance_thresholds['FETCH'] is None:
+        logger.warning("DISPUTER_FETCH_BALANCE_THRESHOLD environment variable not set")
+
+    for asset, (balance, alert_sent) in disputer_balances.items():
+        if disputer_balance_thresholds[asset] is None: continue
+        if balance >= disputer_balance_thresholds[asset]: continue
+        if alert_sent: continue
+
+        subject = f"DVM ALERT ({os.getenv('ENV_NAME', 'default')}) - Disputer {asset} balance threshold met"
+        msg = (
+            f"**Disputer's {asset} balance lower than threshold**\n"
+            f"Disputer's address: {disputer_account.address}\n"
+            f"Current {asset} threshold: {disputer_balance_thresholds[asset]:,.2f}\n"
+            f"Current {asset} balance: {balance:,.2f}\n"
+            f"In network ID: {os.getenv('NETWORK_ID', '943')}"
+        )
+        token_balance_alert(msg)
+        disputer_balances[asset] = (balance, True)
 
 if __name__ == "__main__":
     main()
