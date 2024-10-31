@@ -1,11 +1,19 @@
 """Send text messages using Twilio."""
 import os
 from typing import Any
+from dotenv import load_dotenv
+
+load_dotenv()
 
 import click
 from discordwebhook import Discord
 
 from disputable_values_monitor import ALWAYS_ALERT_QUERY_TYPES
+
+from disputable_values_monitor.utils import get_logger
+from disputable_values_monitor.utils import fetch_dashboard
+
+logger = get_logger(__name__)
 
 
 def generic_alert(msg: str) -> None:
@@ -29,12 +37,17 @@ def get_alert_bot_2() -> Discord:
 
 def get_alert_bot_3() -> Discord:
     return Discord(url=os.getenv("DISCORD_WEBHOOK_URL_3"))
+    
+def token_balance_alert(msg: str) -> None:
+    """send an alert when FETCH or PLS are below the threshold"""
+    send_discord_msg(msg)
+    logger.info("Token balance alert sent")
+    return
 
 
 def dispute_alert(msg: str) -> None:
     """send an alert that the dispute was successful to the user"""
     send_discord_msg(msg)
-    print(msg)
     return
 
 
@@ -67,9 +80,10 @@ def generate_alert_msg(disputable: bool, link: str) -> str:
     includes a link to a relevant expolorer."""
 
     if disputable:
-        return f"\n❗DISPUTABLE VALUE❗\n{link}"
+        return (f"\n**DISPUTABLE VALUE**\n{link}\nCheck latest reports here: {fetch_dashboard['reporter_logs']}\n"
+        f"Initiate a dispute on <12h reports here: {fetch_dashboard['submit_dispute']}")
     else:
-        return f"\n❗NEW VALUE❗\n{link}"
+        return f"\n**NEW VALUE**\n{link}\nCheck latest reports here {fetch_dashboard['reporter_logs']}"
 
 
 def send_discord_msg(msg: str) -> None:
