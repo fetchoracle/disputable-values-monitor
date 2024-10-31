@@ -309,12 +309,20 @@ async def start(
 
         sleep(wait)
 
+excluded_addresses = {"0x0000000000000000000000000000000000000000"}
+warning_sent = False
 async def update_reporters_pls_balance(
     telliot_config: TelliotConfig,
     reporters: list[str],
     reporters_pls_balance: dict[str, tuple[Decimal, bool]],
 ):
+    global warning_sent
     for reporter in reporters:
+        if reporter in excluded_addresses:
+            if not warning_sent:
+                print("Reporters' addresses to monitor token balance not set. Check .env to edit/add them.")
+                warning_sent = True
+            continue
         balance = await get_pls_balance(telliot_config, reporter)
         old_balance, alert_sent = reporters_pls_balance.get(reporter, (0, False))
         reporters_pls_balance[reporter] = (balance, balance <= reporters_pls_balance_threshold[reporter] and alert_sent)
@@ -324,7 +332,12 @@ async def update_reporters_fetch_balance(
     reporters: list[str],
     reporters_fetch_balance: dict[str, tuple[Decimal, bool]],
 ):
+    global warning_sent
     for reporter in reporters:
+        if reporter in excluded_addresses:
+            if not warning_sent:
+                warning_sent = True
+            continue
         old_fetch_balance, alert_sent = reporters_fetch_balance.get(reporter, (0, False))
         reporter_fetch_balance = await get_fetch_balance(cfg, reporter)
         reporters_fetch_balance[reporter] = (reporter_fetch_balance, reporter_fetch_balance <= reporters_fetch_balance_threshold[reporter] and alert_sent)

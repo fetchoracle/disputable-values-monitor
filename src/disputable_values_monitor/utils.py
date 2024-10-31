@@ -169,5 +169,7 @@ chain_url = base_urls.get(NETWORK_ID, (f'No Dashboard for {NETWORK_ID} chain. Ch
 # Construct the links using f-strings
 fetch_dashboard = {
     'home': f'{chain_url}',
-    'vote': f'{chain_url}#/vote-on-dispute'
+    'vote': f'{chain_url}#/vote-on-dispute',
+    'reporter_logs': f'{chain_url}#/reporter-logs',
+    'submit_dispute': f'{chain_url}#/submit-dispute'
 }
