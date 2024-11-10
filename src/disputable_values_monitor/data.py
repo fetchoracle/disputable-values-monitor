@@ -1,4 +1,6 @@
 """Get and parse NewReport events from Tellor oracles."""
+from decimal import *
+
 import asyncio
 import math
 from dataclasses import dataclass
@@ -40,6 +42,10 @@ from disputable_values_monitor.utils import disputable_str
 from disputable_values_monitor.utils import get_logger
 from disputable_values_monitor.utils import get_tx_explorer_url
 from disputable_values_monitor.utils import NewReport
+
+import os
+from dotenv import load_dotenv
+load_dotenv()
 
 logger = get_logger(__name__)
 
@@ -580,3 +586,31 @@ def get_block_number_at_timestamp(cfg: TelliotConfig, timestamp: int) -> Any:
 
 def get_feed_from_catalog(tag: str) -> Optional[DataFeed]:
     return CATALOG_FEEDS.get(tag)
+
+def get_w3(cfg: TelliotConfig, chain_id: int) -> Optional[Web3]:
+    ''' Get FETCH and PLS balance for wallet addresses being monitored '''
+    endpoint = cfg.get_endpoint()
+    if not endpoint:
+        logger.error(f"Unable to find a suitable endpoint for chain_id {chain_id}")
+        return None
+    return endpoint.web3
+
+async def get_fetch_balance(cfg: TelliotConfig, address: str) -> Optional[Decimal]:
+    w3 = get_w3(cfg, int(os.getenv("NETWORK_ID", "943")))
+
+    fetch_token = get_contract(cfg, name="trb-token", account=None)
+    fetch_balance, status = await fetch_token.read("balanceOf", Web3.toChecksumAddress(address))
+
+    if not status.ok:
+        logger.error(f"Unable to retrieve {address} account balance")
+        return None
+
+    fetch_balance = Decimal(w3.fromWei(fetch_balance, 'ether'))
+    
+    return fetch_balance
+
+async def get_pls_balance(cfg: TelliotConfig, address: str) -> Optional[Decimal]:
+    w3 = get_w3(cfg, int(os.getenv("NETWORK_ID", "943")))
+    balance_wei = w3.eth.getBalance(address)
+    balance = Decimal(w3.fromWei(balance_wei, 'ether'))
+    return balance
