@@ -54,7 +54,7 @@ def dispute_alert(msg: str) -> None:
 def alert(all_values: bool, new_report: Any) -> None:
 
     if new_report.query_type in ALWAYS_ALERT_QUERY_TYPES:
-        msg = generate_alert_msg(False, new_report.link)
+        msg = generate_alert_msg(False, new_report)
         send_discord_msg(msg)
 
         return
@@ -62,28 +62,30 @@ def alert(all_values: bool, new_report: Any) -> None:
     # Account for unsupported queryIDs
     if new_report.disputable is not None:
         if new_report.disputable:
-            msg = generate_alert_msg(True, new_report.link)
+            msg = generate_alert_msg(True, new_report)
 
     # If user wants ALL NewReports
     if all_values:
-        msg = generate_alert_msg(False, new_report.link)
+        msg = generate_alert_msg(False, new_report)
         send_discord_msg(msg)
 
     else:
         if new_report.disputable:
-            msg = generate_alert_msg(True, new_report.link)
+            msg = generate_alert_msg(True, new_report)
             send_discord_msg(msg)
 
 
-def generate_alert_msg(disputable: bool, link: str) -> str:
+def generate_alert_msg(disputable: bool, new_report: str) -> str:
     """Generate an alert message string that
     includes a link to a relevant expolorer."""
 
     if disputable:
-        return (f"\n**DISPUTABLE VALUE**\n{link}\nCheck latest reports here: {fetch_dashboard['reporter_logs']}\n"
-        f"Initiate a dispute on <12h reports here: {fetch_dashboard['submit_dispute']}")
+        return (f"\n**DISPUTABLE VALUE**\n{new_report.link}\nCheck latest reports here: {fetch_dashboard['reporter_logs']}\n"
+        f"Initiate a dispute on <12h old reports here: {fetch_dashboard['submit_dispute']}\n"
+        f"Report: {new_report.asset}/{new_report.currency}: {new_report.value}")
     else:
-        return f"\n**NEW VALUE**\n{link}\nCheck latest reports here {fetch_dashboard['reporter_logs']}"
+        return (f"\n**NEW VALUE**\n{new_report.link}\nCheck latest reports here {fetch_dashboard['reporter_logs']}"
+        f"Report: {new_report.asset}/{new_report.currency}: {new_report.value}")
 
 
 def send_discord_msg(msg: str) -> None:
