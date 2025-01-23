@@ -260,7 +260,8 @@ async def start(
                         msg = (
                                f"**Value disputed!**\n" 
                                f"Check Fetch Dashboard to vote on it: {fetch_dashboard['vote']}\n"
-                               f"{success_msg}"
+                               f"{success_msg}\n"
+                               f"{new_report.asset}/{new_report.currency}: {new_report.value}"
                            )
                         dispute_alert(msg)
 
