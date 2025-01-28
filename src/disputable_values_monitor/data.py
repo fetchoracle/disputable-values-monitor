@@ -245,6 +245,36 @@ def get_contract(cfg: TelliotConfig, account: ChainedAccount, name: str) -> Opti
 
     return c
 
+def get_contract_token_alerts(cfg: TelliotConfig, account, name: str) -> Optional[Contract]:
+    """Build Contract object from abi and address for token balance alerts"""
+
+    chain_id = account
+    addr, abi = get_contract_info(chain_id, name)
+
+    if (addr is None) or (abi is None):
+        logger.error(f"Could not find contract {name} on chain_id {chain_id}")
+        return None
+
+    c = Contract(addr, abi, cfg.get_endpoint_token_alerts(chain_id), account)
+
+    try:
+        connected_to_node = cfg.get_endpoint_token_alerts(chain_id).connect()
+    except (ValueError, ConnectionError) as e:
+        logger.error(f"Could not connect to endpoint {cfg.get_endpoint()} for chain_id {chain_id}: " + str(e))
+        return None
+
+    if not connected_to_node:
+        logger.error(f"Could not connect to endpoint {cfg.get_endpoint()} for chain_id {chain_id}")
+        return None
+
+    status = c.connect()
+
+    if not status.ok:
+        logger.error(f"Could not connect to contract {name} on chain_id {chain_id}: " + status.error)
+        return None
+
+    return c
+
 
 def get_query_type(q: OracleQuery) -> str:
     """Get query type from class name"""
@@ -588,17 +618,17 @@ def get_feed_from_catalog(tag: str) -> Optional[DataFeed]:
     return CATALOG_FEEDS.get(tag)
 
 def get_w3(cfg: TelliotConfig, chain_id: int) -> Optional[Web3]:
-    ''' Get FETCH and PLS balance for wallet addresses being monitored '''
-    endpoint = cfg.get_endpoint()
+    ''' Get FETCH and PLS balance for wallet addresses being monitored based on NETWORK_ID in .env '''
+    endpoint = cfg.get_endpoint_token_alerts(chain_id)
     if not endpoint:
         logger.error(f"Unable to find a suitable endpoint for chain_id {chain_id}")
         return None
     return endpoint.web3
 
 async def get_fetch_balance(cfg: TelliotConfig, address: str) -> Optional[Decimal]:
-    w3 = get_w3(cfg, int(os.getenv("NETWORK_ID", "943")))
+    w3 = get_w3(cfg, int(os.getenv("NETWORK_ID", "943"))) #send only NETWORK_ID for endpoint
 
-    fetch_token = get_contract(cfg, name="trb-token", account=None)
+    fetch_token = get_contract_token_alerts(cfg, account=(int(os.getenv("NETWORK_ID", "943"))), name="trb-token")
     fetch_balance, status = await fetch_token.read("balanceOf", Web3.toChecksumAddress(address))
 
     if not status.ok:
