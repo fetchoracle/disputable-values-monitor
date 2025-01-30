@@ -626,7 +626,7 @@ def get_w3(cfg: TelliotConfig, chain_id: int) -> Optional[Web3]:
     return endpoint.web3
 
 async def get_fetch_balance(cfg: TelliotConfig, address: str) -> Optional[Decimal]:
-    w3 = get_w3(cfg, int(os.getenv("NETWORK_ID", "943"))) #send only NETWORK_ID for endpoint
+    w3 = get_w3(cfg, int(os.getenv("NETWORK_ID", "943")))
 
     fetch_token = get_contract_token_alerts(cfg, account=(int(os.getenv("NETWORK_ID", "943"))), name="trb-token")
     fetch_balance, status = await fetch_token.read("balanceOf", Web3.toChecksumAddress(address))
