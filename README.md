@@ -1,16 +1,20 @@
 # Auto-disputer
-A CLI dashboard & alerts app for monitoring and disputing bad values reported to Tellor oracles.
+A CLI dashboard & alerts app for monitoring and disputing bad values reported to Fetch Oracles.
 
 ![](demo.gif)
 
 ## Introduction
 
 The Disputable Values Monitor is a tool that anyone can use to:
-- Monitor / view data submitted to Tellor oracle contracts
+- Monitor / view data submitted to Fetch Oracle contracts
 - Send Discord alerts for unusual data submissions
 - Automatically dispute wildly inaccurate values
 
+Please see the DVM [documentation page](https://docs.fetchoracle.com/votes-and-disputes/introduction-to-dvm) for more information about how to use DVM.
+
 ## Setup
+
+**If you intend to just use DVM, please see the [end-user installation instructions in the documentation](https://docs.fetchoracle.com/votes-and-disputes/introduction-to-dvm/installing-dvm). The instructions below are techinical and only suitable for software developers. You can also se what [monitoring options are available and learn how to use them](https://docs.fetchoracle.com/votes-and-disputes/introduction-to-dvm/monitoring).**
 
 !Run 'source vars.sh' before running DVM to load the Discord variables!
 
@@ -29,7 +33,7 @@ Python 3.9.XX
 
 - Clone the repo and change directory:
 ```bash
-git clone https://github.com/tellor-io/disputable-values-monitor
+git clone https://github.com/fetchoracle/disputable-values-monitor
 cd disputable-values-monitor
 ```
 - Create a python environment for installation:
@@ -97,7 +101,7 @@ Enter `y` to confirm alerts only.
 ### Run the DVM for Automatic Disputes
 
 **Disclaimer:**
-*Disputing Tellor values requires staking TRB tokens that can be lost if the community votes in favor of the reporter. There is no guarantee that this software will correctly identify bad values. Use this auto-disputing functionality at your own risk. Experimenting on a testnet before using any real funds is HIGHLY recommended.
+*Disputing Fetch values requires staking TRB tokens that can be lost if the community votes in favor of the reporter. There is no guarantee that this software will correctly identify bad values. Use this auto-disputing functionality at your own risk. Experimenting on a testnet before using any real funds is HIGHLY recommended.
 
 1) Create a telliot account using the private key for the address that holds your TRB to be used for dispute fees and gas (ETH, or other) for network fees:
 ```bash
@@ -110,7 +114,7 @@ Where `1 10 137 11155111` are the network IDs for the networks you want to be ab
 The provided configuation is for auto-disputing any ETH/USD value that is 75% different from the value calculated by the DVM:
 ```yaml
 # AutoDisputer configuration file
-feeds: # please reference https://github.com/tellor-io/dataSpecs/tree/main/types for examples of QueryTypes w/ Query Parameters
+feeds: # please reference https://github.com/fetchoracle/dataSpecs/tree/main/types for examples of QueryTypes w/ Query Parameters
   - query_id: "0x83a7f3d48786ac2667503a61e8c415438ed2922eb86a2906e4ee66d9a2ce4992"
     threshold:
       type: Percentage
@@ -130,9 +134,9 @@ cli -d -a AccountName
 
 ## How it works / Advanced Configuration
 
-The Auto-disputer is a complex event listener for any EVM chain, but specifically it listens for NewReport events on the Tellor network(s) the user wants to monitor.
+The Auto-disputer is a complex event listener for any EVM chain, but specifically it listens for NewReport events on the Fetch Oracle network(s) the user wants to monitor.
 
-When the Auto-disputer receives new NewReport events, it parses the reported value from the log, then compares the reported value to the trusted value from the Tellor reporter reference implementation, telliot.
+When the Auto-disputer receives new NewReport events, it parses the reported value from the log, then compares the reported value to the trusted value from the Fetch reporter reference implementation, telliot.
 
 In order to auto-dispute, users need to define what a "disputable value" is. To do this, users can set "thresholds" for feeds they want to monitor. Thresholds in the auto-disputer serve to set cutoffs between a healthy value and a disputable value. Users can pick from three types of thresholds: **range, percentage, and equality**.
 
@@ -166,7 +170,7 @@ Ex. If the reported value is "abc123", and the telliot value is "abc1234", then 
 
 Clone repo:
 ```bash
-git clone https://github.com/tellor-io/disputable-values-monitor.git
+git clone https://github.com/fetchoracle/disputable-values-monitor.git
 ```
 Change directory:
 ```bash
