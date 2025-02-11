@@ -130,7 +130,7 @@ def are_all_attributes_none(obj: object) -> bool:
 def format_values(val: Any) -> Any:
     """shorten values for cli display"""
     if isinstance(val, float):
-        return Decimal(f"{val:.4f}")
+        return Decimal(f"{val:.16f}")
     elif len(str(val)) > 10:
         return f"{str(val)[:6]}...{str(val)[-5:]}"
     else:
