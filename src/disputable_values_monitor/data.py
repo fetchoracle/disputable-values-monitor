@@ -345,7 +345,7 @@ async def chain_events(
                 endpoint.connect()
                 w3 = endpoint.web3
             except (IndexError, ValueError) as e:
-                logger.error(f"Unable to connect to endpoint on chain_id {chain_id}: {e}")
+                logger.error(f"chain_events: Unable to connect to endpoint on chain_id {chain_id}: {e}")
                 continue
             events_loop.append(log_loop(w3, chain_id, address, topic, inital_block_offset))
     events: List[List[tuple[int, Any]]] = await asyncio.gather(*events_loop)
@@ -364,10 +364,11 @@ async def get_events(
         if endpoint.url.endswith("{INFURA_API_KEY}"):
             continue
         chain_id = endpoint.chain_id
+        logger.debug(f"get_events: chain_id = {chain_id}")
         try:
             endpoint.connect()
         except Exception as e:
-            logger.warning(f"unable to connect to endpoint for chain_id {chain_id}: {e}")
+            logger.warning(f"get_events: unable to connect to endpoint for chain_id {chain_id}: {e}")
             continue
 
         w3 = endpoint.web3
@@ -442,7 +443,7 @@ async def parse_new_report_event(
             endpoint.connect()
             w3 = endpoint.web3
         except ValueError as e:
-            logger.error(f"Unable to connect to endpoint on chain_id {chain_id}: {e}")
+            logger.error(f"parse_new_report_event: Unable to connect to endpoint on chain_id {chain_id}: {e}")
             return None
 
         codec = w3.codec
@@ -575,7 +576,7 @@ def get_block_number_at_timestamp(cfg: TelliotConfig, timestamp: int) -> Any:
         endpoint = cfg.get_endpoint()
         endpoint.connect()
     except ValueError as e:
-        logger.error(f"Unable to connect to endpoint on chain_id {cfg.main.chain_id}: {e}")
+        logger.error(f"get_block_number_at_timestamp: Unable to connect to endpoint on chain_id {cfg.main.chain_id}: {e}")
         return None
 
     w3 = endpoint.web3
@@ -644,3 +645,24 @@ async def get_pls_balance(cfg: TelliotConfig, address: str) -> Optional[Decimal]
     balance_wei = w3.eth.getBalance(address)
     balance = Decimal(w3.fromWei(balance_wei, 'ether'))
     return balance
+    
+async def get_last_report(cfg: TelliotConfig, address: str) -> int:
+    """ Get the last time a reporter from .env has reported"""
+    #gets contract info
+    try:
+        contract = get_contract_token_alerts(cfg, account=(int(os.getenv("NETWORK_ID", "943"))), name="tellor360-oracle")
+    except Exception as e:
+        logger.error(f"Error getting contract for address {address}: {e}")
+        return 0 
+
+    #get staker info to get last report
+    try:
+        last_report, status = await contract.read("getStakerInfo", Web3.toChecksumAddress(address))
+        logger.debug(f'{last_report[4]}')
+        if not status.ok:
+            logger.warning(f"Status not ok for {address} last report. Status: {status}")
+            return 0
+        return (last_report[4])
+    except Exception as e:
+        logger.error(f"Error getting last report for address {address}: {e}")
+        return 0 
