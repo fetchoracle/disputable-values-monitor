@@ -2,6 +2,7 @@
 import logging
 import warnings
 from time import sleep
+import time
 
 from decimal import *
 import os
@@ -32,13 +33,20 @@ from disputable_values_monitor.utils import get_tx_explorer_url
 from disputable_values_monitor.utils import select_account
 from disputable_values_monitor.utils import Topics
 
-from disputable_values_monitor.data import get_fetch_balance, get_pls_balance
-from disputable_values_monitor.utils import get_env_reporters_balance_threshold, get_reporters
+from disputable_values_monitor.data import get_fetch_balance, get_pls_balance, get_last_report
+from disputable_values_monitor.utils import get_env_reporters_balance_threshold, get_reporters, get_reporters_thresholds
 from disputable_values_monitor.utils import create_async_task
 from disputable_values_monitor.utils import fetch_dashboard
-from disputable_values_monitor.discord import token_balance_alert
+from disputable_values_monitor.discord import token_balance_alert, send_discord_msg
 
+#get wallet addresses for reporters to monitor
 reporters: list[str] = get_reporters()
+
+#get thresholds, in seconds, to check if a reporter has reported or not in X
+reporters_not_reporting_threshold: list[int] = get_reporters_thresholds()
+
+#set with alerts sent so not to double sent alerts
+reporter_stopped_alert_sent = set()
 
 def get_reporters_balance_threshold(reporters: list[str], env_variable_name: str):
     reporters_threshold: list[int] = get_env_reporters_balance_threshold(env_variable_name=env_variable_name)
@@ -155,23 +163,27 @@ async def start(
             topics=[Topics.NEW_REPORT],
             inital_block_offset=initial_block_offset,
         )
-        tellor_flex_report_events = await get_events(
-            cfg=cfg,
-            contract_name="tellorflex-oracle",
-            topics=[Topics.NEW_REPORT],
-            inital_block_offset=initial_block_offset,
-        )
+        ##If using tellorflex-oracle, remove comments.
+        
+        #tellor_flex_report_events = await get_events(
+            #cfg=cfg,
+            #contract_name="tellorflex-oracle",
+            #topics=[Topics.NEW_REPORT],
+            #inital_block_offset=initial_block_offset,
+        #)
         tellor360_events = await chain_events(
             cfg=cfg,
             # addresses are for token contract
             chain_addy={
                 #1: "0x88dF592F8eb5D7Bd38bFeF7dEb0fBc02cf3778a0",
                 #11155111: "0x80fc34a2f9FfE86F41580F47368289C402DEc660",
+                #943: "0xC0573e2Fc47B26fb05097a553BBfcf0166bada0A",
+                #369: "0xe39B70c9978E4232140d148Ad3C0b08f4A42220D",
             },
             topics=[[Topics.NEW_ORACLE_ADDRESS], [Topics.NEW_PROPOSED_ORACLE_ADDRESS]],
             inital_block_offset=initial_block_offset,
         )
-        event_lists += tellor360_events + tellor_flex_report_events
+        event_lists += tellor360_events #+ tellor_flex_report_events
 
         reporters_pls_balance_task = create_async_task(
             update_reporters_pls_balance,
@@ -212,7 +224,15 @@ async def start(
                 disputer_account=account,
                 disputer_balances=disputer_balances
             )
-        )        
+        )
+        reporters_have_reported_task = create_async_task(
+            update_reporters_last_report,
+            cfg,
+            reporters,
+            reporters_not_reporting_threshold
+        )
+        reporters_have_reported_task.add_done_callback(lambda future: None)
+        
         for event_list in event_lists:
             # event_list = [(80001, EXAMPLE_NEW_REPORT_EVENT)]
             if not event_list:
@@ -245,7 +265,7 @@ async def start(
                     continue
                 displayed_events.add(new_report.tx_hash)
 
-                # Refesh
+                # Refresh
                 clear_console()
                 print_title_info()
 
@@ -305,6 +325,7 @@ async def start(
                 df["Value"] = df["Value"].apply(format_values)
                 print(df.to_markdown(index=False), end="\r")
                 df.to_csv("table.csv", mode="a", header=False)
+                click.echo("\n" + 204 * '_')
                 # reset config to clear object attributes that were set during loop
                 disp_cfg = AutoDisputerConfig(is_disputing=is_disputing, confidence_flag=confidence_threshold)
 
@@ -441,6 +462,53 @@ def alert_on_disputer_balances_threshold(
         )
         token_balance_alert(msg)
         disputer_balances[asset] = (balance, True)
+
+async def update_reporters_last_report(
+    telliot_config: TelliotConfig,
+    reporters,
+    reporters_not_reporting_threshold):
+    """
+    Checks the last reported time for each reporter and sends alerts if they haven't reported within the threshold.
+
+    Args:
+        telliot_config: TelliotConfig
+            reporters list[str]
+            reporters_not_reporting_threshold list[int]
+    """
+    global reporter_stopped_alert_sent
+    if not reporters or not reporters_not_reporting_threshold:
+        print("Error: 'REPORTERS' or 'NO_REPORTING_THRESHOLD' not found in .env file.")
+        logger.error("Error: 'REPORTERS' or 'NO_REPORTING_THRESHOLD' not found in .env file.")
+        return
+
+    if len(reporters) != len(reporters_not_reporting_threshold):
+        print("Error: The number of reporters and thresholds for when not reporting must match. Check .env")
+        logger.error("Error: The number of reporters and thresholds for when not reporting must match. Check .env")
+        return
+
+    for i in range(len(reporters)):
+        wallet_address = reporters[i]
+        time_threshold = reporters_not_reporting_threshold[i]
+        current_time = int(time.time())  #gets a fresh timestamp for calcs
+
+        last_report = await get_last_report(telliot_config, wallet_address)
+        time_since_report = current_time - last_report
+
+        if time_since_report > time_threshold:
+            if wallet_address not in reporter_stopped_alert_sent:
+                msg = (
+                    f"\n❗Reporter may have stopped❗\n"
+                    f"**{wallet_address}** has not reported in: "
+                    f"{time_since_report} seconds. \n**Last report was:** "
+                    f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(last_report))} (Timestamp: {last_report}).\n"
+                    f"**Threshold set to send alert:** {time_threshold} seconds without a new report."
+                )
+                send_discord_msg(msg)
+                reporter_stopped_alert_sent.add(wallet_address)  # Add wallet to the set after sending the alert
+        else:
+            # If the reporter has reported recently, remove them from the alert set
+            if wallet_address in reporter_stopped_alert_sent:
+                reporter_stopped_alert_sent.remove(wallet_address)
 
 if __name__ == "__main__":
     main()
