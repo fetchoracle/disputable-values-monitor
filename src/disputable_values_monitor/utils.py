@@ -113,7 +113,7 @@ def get_logger(name: str) -> logging.Logger:
     fh.setFormatter(formatter)
     logger = logging.getLogger(name)
     logger.addHandler(fh)
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
     return logger
 
 
@@ -152,6 +152,11 @@ def get_env_reporters_balance_threshold(env_variable_name: str):
 def get_reporters():
     reporters = [reporter.strip() for reporter in os.getenv('REPORTERS', "").split(',')]
     return [Web3.toChecksumAddress(reporter) for reporter in reporters if reporter != ""]
+
+def get_reporters_thresholds():
+    thresholds = [int(t.strip()) for t in os.getenv('NO_REPORTING_THRESHOLD', "").split(",")]
+    return [threshold for threshold in thresholds if threshold != ""]
+
 
 def create_async_task(function, *args, **kwargs):
     return asyncio.create_task(function(*args, **kwargs))
