@@ -39,8 +39,13 @@ from disputable_values_monitor.utils import create_async_task
 from disputable_values_monitor.utils import fetch_dashboard
 from disputable_values_monitor.discord import token_balance_alert, send_discord_msg
 
+logger = get_logger(__name__)
+
 #get wallet addresses for reporters to monitor
 reporters: list[str] = get_reporters()
+if "0x0000000000000000000000000000000000000000" in reporters:
+        logger.info("One or more addresses to monitor is the default 0x000... Check .env in telliot-feeds folder to edit/add them IF you want to receive alerts.")
+        print("\nOne or more addresses to monitor is the default 0x000...\nCheck .env in telliot-feeds folder to edit/add them IF you want to receive alerts.\n")
 
 #get thresholds, in seconds, to check if a reporter has reported or not in X
 reporters_not_reporting_threshold: list[int] = get_reporters_thresholds()
@@ -74,8 +79,6 @@ price_aggregator_logger = logging.getLogger("telliot_feeds.sources.price_aggrega
 price_aggregator_logger.handlers = [
     h for h in price_aggregator_logger.handlers if not isinstance(h, logging.StreamHandler)
 ]
-
-logger = get_logger(__name__)
 
 
 def print_title_info() -> None:
@@ -342,7 +345,6 @@ async def update_reporters_pls_balance(
     for reporter in reporters:
         if reporter in excluded_addresses:
             if not warning_sent:
-                print("Reporters' addresses to monitor token balance not set. Check .env to edit/add them.")
                 warning_sent = True
             continue
         balance = await get_pls_balance(telliot_config, reporter)
@@ -489,6 +491,11 @@ async def update_reporters_last_report(
     for i in range(len(reporters)):
         wallet_address = reporters[i]
         time_threshold = reporters_not_reporting_threshold[i]
+        
+        # Skip check if the wallet is the default value
+        if wallet_address == "0x0000000000000000000000000000000000000000":
+            continue 
+        
         current_time = int(time.time())  #gets a fresh timestamp for calcs
 
         last_report = await get_last_report(telliot_config, wallet_address)
