@@ -1,4 +1,5 @@
 """CLI dashboard to display recent values reported to Tellor oracles."""
+import asyncio
 import logging
 import warnings
 from time import sleep
@@ -33,25 +34,37 @@ from disputable_values_monitor.utils import get_tx_explorer_url
 from disputable_values_monitor.utils import select_account
 from disputable_values_monitor.utils import Topics
 
-from disputable_values_monitor.data import get_fetch_balance, get_pls_balance, get_last_report
-from disputable_values_monitor.utils import get_env_reporters_balance_threshold, get_reporters, get_reporters_thresholds
+from disputable_values_monitor.data import get_fetch_balance, get_pls_balance, get_last_report, get_queryid_last_timestamp
+from disputable_values_monitor.utils import get_env_reporters_balance_threshold, get_reporters, get_reporters_thresholds, get_queryids, get_queryids_thresholds
 from disputable_values_monitor.utils import create_async_task
 from disputable_values_monitor.utils import fetch_dashboard
 from disputable_values_monitor.discord import token_balance_alert, send_discord_msg
 
 logger = get_logger(__name__)
 
-#get wallet addresses for reporters to monitor
+#get wallet addresses of reporters to monitor
 reporters: list[str] = get_reporters()
 if "0x0000000000000000000000000000000000000000" in reporters:
-        logger.info("One or more addresses to monitor is the default 0x000... Check .env in telliot-feeds folder to edit/add them IF you want to receive alerts.")
-        print("\nOne or more addresses to monitor is the default 0x000...\nCheck .env in telliot-feeds folder to edit/add them IF you want to receive alerts.\n")
+        logger.info("One or more Reporters to monitor is the default '0x000...' Check .env in telliot-feeds folder to edit/add them IF you want these alerts.")
+        print("One or more REPORTERS to monitor is the default '0x000...'\nLeave as is or edit .env inside /telliot-feeds if you want these alerts.\n")
 
 #get thresholds, in seconds, to check if a reporter has reported or not in X
 reporters_not_reporting_threshold: list[int] = get_reporters_thresholds()
 
-#set with alerts sent so not to double sent alerts
+#get queryIDs to monitor the last time they were reported
+query_ids: list[str] = get_queryids()
+if "0x00000000000000000000000000000000000000000000000000000000000000000" in query_ids:
+        logger.info("One or more queryIDs to monitor is the default '0x000...' Check .env in telliot-feeds folder to edit/add them IF you want these alerts.")
+        print("One or more queryIDs to monitor is the default '0x000...'\nLeave as is or edit .env inside /telliot-feeds if you want these alerts.\n")
+
+#get thresholds, in seconds, to check if a queryID was reported or not in X
+queryids_unreported_threshold: list[int] = get_queryids_thresholds()
+
+#set with reporter alerts sent so not to send duplicates
 reporter_stopped_alert_sent = set()
+
+#set with queryIDs alerts sent so not to send duplicates
+queryids_unreported_alert_sent = set()
 
 def get_reporters_balance_threshold(reporters: list[str], env_variable_name: str):
     reporters_threshold: list[int] = get_env_reporters_balance_threshold(env_variable_name=env_variable_name)
@@ -235,6 +248,14 @@ async def start(
             reporters_not_reporting_threshold
         )
         reporters_have_reported_task.add_done_callback(lambda future: None)
+#TODO:
+        queryid_last_report_task = create_async_task(
+            update_queryid_last_report,
+            cfg,
+            query_ids,
+            queryids_unreported_threshold
+        )
+        queryid_last_report_task.add_done_callback(lambda future: None)
         
         for event_list in event_lists:
             # event_list = [(80001, EXAMPLE_NEW_REPORT_EVENT)]
@@ -491,15 +512,20 @@ async def update_reporters_last_report(
     for i in range(len(reporters)):
         wallet_address = reporters[i]
         time_threshold = reporters_not_reporting_threshold[i]
-        
-        # Skip check if the wallet is the default value
-        if wallet_address == "0x0000000000000000000000000000000000000000":
-            continue 
-        
-        current_time = int(time.time())  #gets a fresh timestamp for calcs
 
+        if wallet_address == "0x0000000000000000000000000000000000000000":
+            continue # Skip check if the wallet is the default value
+
+        current_time = int(time.time())  # gets a fresh timestamp for calcs
         last_report = await get_last_report(telliot_config, wallet_address)
-        time_since_report = current_time - last_report
+        if last_report == 0:
+            logger.info(f'Error in get_last_report for {wallet_address}.')
+            continue
+        if last_report < current_time:
+            time_since_report = current_time - last_report
+        else:
+            logger.info(f'Timestamp for {wallet_address} in the future.')
+            continue
 
         if time_since_report > time_threshold:
             if wallet_address not in reporter_stopped_alert_sent:
@@ -516,6 +542,66 @@ async def update_reporters_last_report(
             # If the reporter has reported recently, remove them from the alert set
             if wallet_address in reporter_stopped_alert_sent:
                 reporter_stopped_alert_sent.remove(wallet_address)
+
+
+async def update_queryid_last_report(
+        telliot_config: TelliotConfig,
+        query_ids: list[str],
+        queryids_unreported_threshold: list[int]):
+    """
+    Checks the last reported time for each queryIDs and sends alerts if they were not reported within threshold.
+
+    Args:
+        telliot_config: TelliotConfig
+            query_ids: list[str]
+            queryids_unreported_threshold: list[int]
+    """
+    global queryids_unreported_alert_sent
+    if not query_ids or not queryids_unreported_threshold:
+        print("Error: 'QUERY_IDS' or 'QUERYID_LAST_REPORT_THRESHOLD' not found in .env file.")
+        logger.error("Error: 'QUERY_IDS' or 'QUERYID_LAST_REPORT_THRESHOLD' not found in .env file.")
+        return
+
+    if len(query_ids) != len(queryids_unreported_threshold):
+        print("Error: The number of values in QUERY_IDS and QUERYID_LAST_REPORT_THRESHOLD must match. Check .env")
+        logger.error("Error: The number of values in QUERY_IDS and QUERYID_LAST_REPORT_THRESHOLD must match. Check .env")
+        return
+
+    for i in range(len(query_ids)):
+        qid_address = query_ids[i]
+        time_threshold = queryids_unreported_threshold[i]
+
+        # Skip check if the queryID is the default value
+        if qid_address == "0x00000000000000000000000000000000000000000000000000000000000000000":
+            continue
+
+        current_time = int(time.time())  # gets a fresh timestamp for calcs
+        last_report = await get_queryid_last_timestamp(telliot_config, qid_address, current_time)
+        if last_report == 0:
+            logger.info(f'Error in get_queryid_last_timestamp for {qid_address}.')
+            continue
+        if last_report < current_time:
+            time_since_report = current_time - last_report
+        else:
+            logger.info(f'Timestamp for {qid_address} in the future.')
+            continue
+
+        if time_since_report > time_threshold:
+            if qid_address not in queryids_unreported_alert_sent:
+                msg = (
+                    f"\n❗QueryID Alert❗\n"
+                    f"No new reports for:\n"
+                    f"**{qid_address}** in: "
+                    f"{time_since_report} seconds. \n**Last report was:** "
+                    f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(last_report))} (Timestamp: {last_report}).\n"
+                    f"**Threshold set to send alert:** {time_threshold} seconds without a new report."
+                )
+                send_discord_msg(msg)
+                queryids_unreported_alert_sent.add(qid_address)  # Add wallet to the set after sending the alert
+        else:
+            # If the reporter has reported recently, remove them from the alert set
+            if qid_address in queryids_unreported_alert_sent:
+                queryids_unreported_alert_sent.remove(qid_address)
 
 if __name__ == "__main__":
     main()

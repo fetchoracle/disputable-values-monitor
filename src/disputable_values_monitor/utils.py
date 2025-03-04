@@ -157,6 +157,14 @@ def get_reporters_thresholds():
     thresholds = [int(t.strip()) for t in os.getenv('NO_REPORTING_THRESHOLD', "").split(",")]
     return [threshold for threshold in thresholds if threshold != ""]
 
+def get_queryids():
+    queryids = [queryid.strip() for queryid in os.getenv('QUERY_IDS', "").split(',')]
+    return [queryid for queryid in queryids if queryid != ""]
+
+def get_queryids_thresholds():
+    thresholds = [int(t.strip()) for t in os.getenv('QUERYID_LAST_REPORT_THRESHOLD', "").split(",")]
+    return [threshold for threshold in thresholds if threshold != ""]
+
 
 def create_async_task(function, *args, **kwargs):
     return asyncio.create_task(function(*args, **kwargs))

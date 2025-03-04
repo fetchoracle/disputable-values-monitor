@@ -652,7 +652,7 @@ async def get_last_report(cfg: TelliotConfig, address: str) -> int:
     try:
         contract = get_contract_token_alerts(cfg, account=(int(os.getenv("NETWORK_ID", "943"))), name="tellor360-oracle")
     except Exception as e:
-        logger.error(f"Error getting contract for address {address}: {e}")
+        logger.error(f"Error getting contract info for get_last_report: {e}")
         return 0 
 
     #get staker info to get last report
@@ -665,4 +665,25 @@ async def get_last_report(cfg: TelliotConfig, address: str) -> int:
         return (last_report[4])
     except Exception as e:
         logger.error(f"Error getting last report for address {address}: {e}")
-        return 0 
+        return 0
+
+async def get_queryid_last_timestamp(cfg: TelliotConfig, qid_address: str, timestamp: int) -> int:
+    """ Get the last time a queryID from .env was submitted"""
+    #gets contract info
+    try:
+        contract = get_contract_token_alerts(cfg, account=(int(os.getenv("NETWORK_ID", "943"))), name="tellor360-oracle")
+    except Exception as e:
+        logger.error(f"Error getting contract info for get_queryid_last_timestamp: {e}")
+        return 0
+
+    #call getDataBefore to check when was the last submission for the queryID
+    try:
+        last_report, status = await contract.read("getDataBefore", qid_address, timestamp)
+        logger.debug(f'Last submission: {qid_address}: {last_report[2]}')
+        if not status.ok:
+            logger.warning(f"Status not ok for {qid_address} last report. Status: {status}")
+            return 0
+        return last_report[2]
+    except Exception as e:
+        logger.error(f"Error getting last report for qid_address {qid_address}: {e}")
+        return 0
