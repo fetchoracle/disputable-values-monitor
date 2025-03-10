@@ -42,7 +42,26 @@ class Topics:
     NEW_PROPOSED_ORACLE_ADDRESS: str = (
         "0x8fe6b09081e9ffdaf91e337aba6769019098771106b34b194f1781b7db1bf42b"  # oracle.NewProposedOracleAddress
     )
+    # Keccak256("NewDispute(uint256,bytes32,uint256,address,address,uint256,uint256,uint256,uint256)")
+    NEW_DISPUTE: str = "0xfbfeca72a80efb0d1aabf7f937aaec719fa5c81548a4ade65b40ecdec0afca4e"
 
+@dataclass
+class NewDispute:
+    """NewDispute event."""
+
+    tx_hash: str = ""
+    timestamp: int = 0
+    reporter: str = ""
+    query_id: str = ""
+    dispute_id: int = 0
+    initiator: str = ""
+    chain_id: int = 0
+    link: str = ""
+    blockNumber: int = 0
+    startDate: int = 0
+    voteRound: int = 0
+    fee: int = 0
+    voteRoundLength: int = 0
 
 @dataclass
 class NewReport:

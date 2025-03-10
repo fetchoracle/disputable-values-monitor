@@ -24,11 +24,11 @@ def generic_alert(msg: str) -> None:
 
 def get_alert_bot_1() -> Discord:
     """Read the Discord webhook url from the environment."""
-    DISCORD_WEBHOOK_URL_1 = os.getenv("DISCORD_WEBHOOK_URL_1")
-    if DISCORD_WEBHOOK_URL_1 is None:
+    discord_webhook_url_1 = os.getenv("DISCORD_WEBHOOK_URL_1")
+    if discord_webhook_url_1 is None:
+        logger.error(f"At least one DISCORD_WEBHOOK_URL is required. Check .env before running the 'cli' command.")
         raise Exception("At least one DISCORD_WEBHOOK_URL is required. Check .env before running the 'cli' command.")
-        logger.info(f"At least one DISCORD_WEBHOOK_URL is required. Check .env before running the 'cli' command.")
-    alert_bot_1 = Discord(url=DISCORD_WEBHOOK_URL_1)
+    alert_bot_1 = Discord(url=discord_webhook_url_1)
     return alert_bot_1
 
 
@@ -92,13 +92,13 @@ def generate_alert_msg(disputable: bool, new_report: str) -> str:
 
 def send_discord_msg(msg: str) -> None:
     """Send Discord alert."""
-    MONITOR_NAME = os.getenv("MONITOR_NAME")
-    message = f"❗{MONITOR_NAME} Found Something❗\n"
+    monitor_name = os.getenv("MONITOR_NAME")
+    message = f"{monitor_name} Found Something:\n"
     get_alert_bot_1().post(content=message + msg)
     logger.info(f"Alert sent bot 1: {msg}")
     
-    DISCORD_WEBHOOK_URL_2 = os.getenv("DISCORD_WEBHOOK_URL_2")
-    if not DISCORD_WEBHOOK_URL_2:
+    discord_webhook_url_2 = os.getenv("DISCORD_WEBHOOK_URL_2")
+    if not discord_webhook_url_2:
         pass
     else:
         try:
@@ -108,8 +108,8 @@ def send_discord_msg(msg: str) -> None:
             click.echo(f"alert bot 2 not used? {e}")
             logger.info(f"alert bot 2 not used? {e}")
         pass
-    DISCORD_WEBHOOK_URL_3 = os.getenv("DISCORD_WEBHOOK_URL_3")
-    if not DISCORD_WEBHOOK_URL_3:
+    discord_webhook_url_3 = os.getenv("DISCORD_WEBHOOK_URL_3")
+    if not discord_webhook_url_3:
         pass
     else:
         try:

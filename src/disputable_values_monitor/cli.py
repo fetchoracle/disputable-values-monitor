@@ -21,7 +21,7 @@ from disputable_values_monitor import WAIT_PERIOD
 from disputable_values_monitor.config import AutoDisputerConfig
 from disputable_values_monitor.data import chain_events
 from disputable_values_monitor.data import get_events
-from disputable_values_monitor.data import parse_new_report_event
+from disputable_values_monitor.data import parse_new_report_event,parse_new_dispute_event
 from disputable_values_monitor.discord import alert
 from disputable_values_monitor.discord import dispute_alert
 from disputable_values_monitor.discord import generic_alert
@@ -39,6 +39,7 @@ from disputable_values_monitor.utils import get_env_reporters_balance_threshold,
 from disputable_values_monitor.utils import create_async_task
 from disputable_values_monitor.utils import fetch_dashboard
 from disputable_values_monitor.discord import token_balance_alert, send_discord_msg
+from telliot_feeds.utils.discord import get_dashboard_url
 
 logger = get_logger(__name__)
 
@@ -62,9 +63,10 @@ queryids_unreported_threshold: list[int] = get_queryids_thresholds()
 
 #set with reporter alerts sent so not to send duplicates
 reporter_stopped_alert_sent = set()
-
 #set with queryIDs alerts sent so not to send duplicates
 queryids_unreported_alert_sent = set()
+#set with disputeIDs alerts sent so not to send duplicates
+new_dispute_even_alert_sent = set()
 
 def get_reporters_balance_threshold(reporters: list[str], env_variable_name: str):
     reporters_threshold: list[int] = get_env_reporters_balance_threshold(env_variable_name=env_variable_name)
@@ -151,7 +153,7 @@ async def start(
 ) -> None:
     """Start the CLI dashboard."""
     cfg = TelliotConfig()
-    cfg.main.chain_id = int(os.getenv("NETWORK_ID", "943")) #chain_id to select account to dispute
+    cfg.main.chain_id = int(os.getenv("NETWORK_ID", "943"))
     disp_cfg = AutoDisputerConfig(is_disputing=is_disputing, confidence_flag=confidence_threshold)
     print_title_info()
 
@@ -179,6 +181,12 @@ async def start(
             topics=[Topics.NEW_REPORT],
             inital_block_offset=initial_block_offset,
         )
+        governance_dispute_events = await get_events(
+            cfg=cfg,
+            contract_name="tellor-governance",
+            topics=[Topics.NEW_DISPUTE],
+            inital_block_offset=initial_block_offset,
+        )
         ##If using tellorflex-oracle, remove comments.
         
         #tellor_flex_report_events = await get_events(
@@ -199,7 +207,7 @@ async def start(
             topics=[[Topics.NEW_ORACLE_ADDRESS], [Topics.NEW_PROPOSED_ORACLE_ADDRESS]],
             inital_block_offset=initial_block_offset,
         )
-        event_lists += tellor360_events #+ tellor_flex_report_events
+        event_lists += governance_dispute_events #tellor360_events + tellor_flex_report_events
 
         reporters_pls_balance_task = create_async_task(
             update_reporters_pls_balance,
@@ -248,7 +256,7 @@ async def start(
             reporters_not_reporting_threshold
         )
         reporters_have_reported_task.add_done_callback(lambda future: None)
-#TODO:
+
         queryid_last_report_task = create_async_task(
             update_queryid_last_report,
             cfg,
@@ -271,6 +279,59 @@ async def start(
                     link = get_tx_explorer_url(cfg=cfg, tx_hash=event.transactionHash.hex())
                     msg = f"\n❗NEW ORACLE ADDRESS ALERT❗\n{link}"
                     generic_alert(msg=msg)
+                    continue
+
+                if HexBytes(Topics.NEW_DISPUTE) in event.topics:
+                    if event.transactionHash.hex() in new_dispute_even_alert_sent:
+                        logger.debug(f'tx hash already added to set:{event.transactionHash.hex}')
+                        continue
+                    logger.debug(f'event tx hash:{event.transactionHash.hex}')
+
+                    new_dispute = await parse_new_dispute_event(
+                        cfg=cfg,
+                        log=event
+                    )
+                    #TODO: prob not need these too, since we don't use notification service
+
+                    # if new_dispute.reporter in reporters:
+                    #     subject = f"DVM ALERT ({os.getenv('ENV_NAME', 'default')}) - New Dispute against Reporter {new_dispute.reporter}"
+                    #     msg = format_new_dispute_message(new_dispute)
+                    #     new_dispute_against_reporter_notification_task = create_async_task(
+                    #         handle_notification_service,
+                    #         subject=subject,
+                    #         msg=msg,
+                    #         notification_service=notification_service,
+                    #         sms_message_function=lambda notification_source: dispute_alert(f"{subject}\n{msg}",
+                    #                                                                        recipients, from_number,
+                    #                                                                        notification_source),
+                    #         ses=ses,
+                    #         slack=slack,
+                    #         notification_service_results=notification_service_results,
+                    #         notification_source=NotificationSources.NEW_DISPUTE_AGAINST_REPORTER
+                    #     )
+                    #     new_dispute_against_reporter_notification_task.add_done_callback(
+                    #         lambda future_obj: notification_task_callback(
+                    #             msg=f"New Dispute Event against Reporter",
+                    #             notification_service_results=notification_service_results,
+                    #             notification_source=NotificationSources.NEW_DISPUTE_AGAINST_REPORTER
+                    #         )
+                    #     )
+                    msg =(
+                        f"❕NEW DISPUTE EVENT❕\n"
+                        f"\nCheck the Dashboard and VOTE. Otherwise you risk forfeiting staking rewards!\n\n"
+                        f"- Chain ID: {new_dispute.chain_id}\n"
+                        f"- Dispute ID: {new_dispute.dispute_id}\n"
+                        f"- Reporter: {new_dispute.reporter}\n"
+                        f"- Disputer: {new_dispute.initiator}\n"
+                        f"- Start date: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(new_dispute.startDate))}"
+                        f" (Timestamp: {new_dispute.startDate})\n"
+                        f"- Vote round: {new_dispute.voteRound}\n"
+                        f"**Vote here:** {get_dashboard_url(str(new_dispute.chain_id), 'vote')}"
+
+                    )
+                    new_dispute_even_alert_sent.add(new_dispute.tx_hash)
+                    logger.debug(f'new tx hash added to set{new_dispute.tx_hash}')
+                    send_discord_msg(msg)
                     continue
 
                 try:

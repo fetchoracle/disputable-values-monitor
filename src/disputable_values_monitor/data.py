@@ -35,13 +35,13 @@ from web3.middleware import geth_poa_middleware
 from web3.types import LogReceipt
 
 from disputable_values_monitor import ALWAYS_ALERT_QUERY_TYPES
-from disputable_values_monitor import NEW_REPORT_ABI
+from disputable_values_monitor import NEW_REPORT_ABI, NEW_DISPUTE_ABI
 from disputable_values_monitor.discord import send_discord_msg
 from disputable_values_monitor.utils import are_all_attributes_none
 from disputable_values_monitor.utils import disputable_str
 from disputable_values_monitor.utils import get_logger
 from disputable_values_monitor.utils import get_tx_explorer_url
-from disputable_values_monitor.utils import NewReport
+from disputable_values_monitor.utils import NewReport,NewDispute
 
 import os
 from dotenv import load_dotenv
@@ -419,6 +419,45 @@ def get_source_from_data(query_data: bytes) -> Optional[DataSource]:
         setattr(source, key, value)
     return source
 
+
+async def parse_new_dispute_event(
+        cfg: TelliotConfig,
+        log: LogReceipt
+) -> Optional[NewDispute]:
+    chain_id = cfg.main.chain_id
+    endpoint = cfg.endpoints.find(chain_id=chain_id)[0]
+
+    new_dispute = NewDispute()
+
+    if not endpoint:
+        logger.error(f"Unable to find a suitable endpoint for chain_id {chain_id}")
+        return None
+
+    try:
+        endpoint.connect()
+        w3 = endpoint.web3
+    except ValueError as e:
+        logger.error(f"Unable to connect to endpoint on chain_id {chain_id}: {e}")
+        return None
+
+    codec = w3.codec
+    event_data = get_event_data(codec, NEW_DISPUTE_ABI, log)
+
+    new_dispute.tx_hash = event_data.transactionHash.hex()
+    new_dispute.chain_id = chain_id
+    new_dispute.dispute_id = event_data.args._disputeId
+    new_dispute.reporter = event_data.args._reporter
+    new_dispute.query_id = "0x" + event_data.args._queryId.hex()
+    new_dispute.initiator = event_data.args._initiator
+    new_dispute.timestamp = event_data.args._timestamp
+    new_dispute.startDate = event_data.args._startDate
+    new_dispute.voteRound = event_data.args._voteRound
+    new_dispute.fee = event_data.args._fee
+    new_dispute.voteRoundLength = event_data.args._voteRoundLength
+    new_dispute.link = get_tx_explorer_url(tx_hash=new_dispute.tx_hash, cfg=cfg)
+    new_dispute.blockNumber = event_data.blockNumber
+
+    return new_dispute
 
 async def parse_new_report_event(
     cfg: TelliotConfig,
