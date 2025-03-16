@@ -1,7 +1,9 @@
 """CLI dashboard to display recent values reported to Tellor oracles."""
+import asyncio
 import logging
 import warnings
 from time import sleep
+import time
 
 from decimal import *
 import os
@@ -19,7 +21,7 @@ from disputable_values_monitor import WAIT_PERIOD
 from disputable_values_monitor.config import AutoDisputerConfig
 from disputable_values_monitor.data import chain_events
 from disputable_values_monitor.data import get_events
-from disputable_values_monitor.data import parse_new_report_event
+from disputable_values_monitor.data import parse_new_report_event,parse_new_dispute_event
 from disputable_values_monitor.discord import alert
 from disputable_values_monitor.discord import dispute_alert
 from disputable_values_monitor.discord import generic_alert
@@ -32,13 +34,39 @@ from disputable_values_monitor.utils import get_tx_explorer_url
 from disputable_values_monitor.utils import select_account
 from disputable_values_monitor.utils import Topics
 
-from disputable_values_monitor.data import get_fetch_balance, get_pls_balance
-from disputable_values_monitor.utils import get_env_reporters_balance_threshold, get_reporters
+from disputable_values_monitor.data import get_fetch_balance, get_pls_balance, get_last_report, get_queryid_last_timestamp
+from disputable_values_monitor.utils import get_env_reporters_balance_threshold, get_reporters, get_reporters_thresholds, get_queryids, get_queryids_thresholds
 from disputable_values_monitor.utils import create_async_task
 from disputable_values_monitor.utils import fetch_dashboard
-from disputable_values_monitor.discord import token_balance_alert
+from disputable_values_monitor.discord import token_balance_alert, send_discord_msg
+from telliot_feeds.utils.discord import get_dashboard_url
 
+logger = get_logger(__name__)
+
+#get wallet addresses of reporters to monitor
 reporters: list[str] = get_reporters()
+if "0x0000000000000000000000000000000000000000" in reporters:
+        logger.info("One or more Reporters to monitor is the default '0x000...' Check .env in telliot-feeds folder to edit/add them IF you want these alerts.")
+        print("One or more REPORTERS to monitor is the default '0x000...'\nLeave as is or edit .env inside /telliot-feeds if you want these alerts.\n")
+
+#get thresholds, in seconds, to check if a reporter has reported or not in X
+reporters_not_reporting_threshold: list[int] = get_reporters_thresholds()
+
+#get queryIDs to monitor the last time they were reported
+query_ids: list[str] = get_queryids()
+if "0x00000000000000000000000000000000000000000000000000000000000000000" in query_ids:
+        logger.info("One or more queryIDs to monitor is the default '0x000...' Check .env in telliot-feeds folder to edit/add them IF you want these alerts.")
+        print("One or more queryIDs to monitor is the default '0x000...'\nLeave as is or edit .env inside /telliot-feeds if you want these alerts.\n")
+
+#get thresholds, in seconds, to check if a queryID was reported or not in X
+queryids_unreported_threshold: list[int] = get_queryids_thresholds()
+
+#set with reporter alerts sent so not to send duplicates
+reporter_stopped_alert_sent = set()
+#set with queryIDs alerts sent so not to send duplicates
+queryids_unreported_alert_sent = set()
+#set with disputeIDs alerts sent so not to send duplicates
+new_dispute_even_alert_sent = set()
 
 def get_reporters_balance_threshold(reporters: list[str], env_variable_name: str):
     reporters_threshold: list[int] = get_env_reporters_balance_threshold(env_variable_name=env_variable_name)
@@ -66,8 +94,6 @@ price_aggregator_logger = logging.getLogger("telliot_feeds.sources.price_aggrega
 price_aggregator_logger.handlers = [
     h for h in price_aggregator_logger.handlers if not isinstance(h, logging.StreamHandler)
 ]
-
-logger = get_logger(__name__)
 
 
 def print_title_info() -> None:
@@ -127,7 +153,7 @@ async def start(
 ) -> None:
     """Start the CLI dashboard."""
     cfg = TelliotConfig()
-    cfg.main.chain_id = int(os.getenv("NETWORK_ID", "943")) #chain_id to select account to dispute
+    cfg.main.chain_id = int(os.getenv("NETWORK_ID", "943"))
     disp_cfg = AutoDisputerConfig(is_disputing=is_disputing, confidence_flag=confidence_threshold)
     print_title_info()
 
@@ -155,23 +181,33 @@ async def start(
             topics=[Topics.NEW_REPORT],
             inital_block_offset=initial_block_offset,
         )
-        tellor_flex_report_events = await get_events(
+        governance_dispute_events = await get_events(
             cfg=cfg,
-            contract_name="tellorflex-oracle",
-            topics=[Topics.NEW_REPORT],
+            contract_name="tellor-governance",
+            topics=[Topics.NEW_DISPUTE],
             inital_block_offset=initial_block_offset,
         )
+        ##If using tellorflex-oracle, remove comments.
+        
+        #tellor_flex_report_events = await get_events(
+            #cfg=cfg,
+            #contract_name="tellorflex-oracle",
+            #topics=[Topics.NEW_REPORT],
+            #inital_block_offset=initial_block_offset,
+        #)
         tellor360_events = await chain_events(
             cfg=cfg,
             # addresses are for token contract
             chain_addy={
                 #1: "0x88dF592F8eb5D7Bd38bFeF7dEb0fBc02cf3778a0",
                 #11155111: "0x80fc34a2f9FfE86F41580F47368289C402DEc660",
+                #943: "0xC0573e2Fc47B26fb05097a553BBfcf0166bada0A",
+                #369: "0xe39B70c9978E4232140d148Ad3C0b08f4A42220D",
             },
             topics=[[Topics.NEW_ORACLE_ADDRESS], [Topics.NEW_PROPOSED_ORACLE_ADDRESS]],
             inital_block_offset=initial_block_offset,
         )
-        event_lists += tellor360_events + tellor_flex_report_events
+        event_lists += governance_dispute_events #tellor360_events + tellor_flex_report_events
 
         reporters_pls_balance_task = create_async_task(
             update_reporters_pls_balance,
@@ -212,7 +248,23 @@ async def start(
                 disputer_account=account,
                 disputer_balances=disputer_balances
             )
-        )        
+        )
+        reporters_have_reported_task = create_async_task(
+            update_reporters_last_report,
+            cfg,
+            reporters,
+            reporters_not_reporting_threshold
+        )
+        reporters_have_reported_task.add_done_callback(lambda future: None)
+
+        queryid_last_report_task = create_async_task(
+            update_queryid_last_report,
+            cfg,
+            query_ids,
+            queryids_unreported_threshold
+        )
+        queryid_last_report_task.add_done_callback(lambda future: None)
+        
         for event_list in event_lists:
             # event_list = [(80001, EXAMPLE_NEW_REPORT_EVENT)]
             if not event_list:
@@ -227,6 +279,59 @@ async def start(
                     link = get_tx_explorer_url(cfg=cfg, tx_hash=event.transactionHash.hex())
                     msg = f"\n❗NEW ORACLE ADDRESS ALERT❗\n{link}"
                     generic_alert(msg=msg)
+                    continue
+
+                if HexBytes(Topics.NEW_DISPUTE) in event.topics:
+                    if event.transactionHash.hex() in new_dispute_even_alert_sent:
+                        logger.debug(f'tx hash already added to set:{event.transactionHash.hex}')
+                        continue
+                    logger.debug(f'event tx hash:{event.transactionHash.hex}')
+
+                    new_dispute = await parse_new_dispute_event(
+                        cfg=cfg,
+                        log=event
+                    )
+                    #TODO: prob not need these too, since we don't use notification service
+
+                    # if new_dispute.reporter in reporters:
+                    #     subject = f"DVM ALERT ({os.getenv('ENV_NAME', 'default')}) - New Dispute against Reporter {new_dispute.reporter}"
+                    #     msg = format_new_dispute_message(new_dispute)
+                    #     new_dispute_against_reporter_notification_task = create_async_task(
+                    #         handle_notification_service,
+                    #         subject=subject,
+                    #         msg=msg,
+                    #         notification_service=notification_service,
+                    #         sms_message_function=lambda notification_source: dispute_alert(f"{subject}\n{msg}",
+                    #                                                                        recipients, from_number,
+                    #                                                                        notification_source),
+                    #         ses=ses,
+                    #         slack=slack,
+                    #         notification_service_results=notification_service_results,
+                    #         notification_source=NotificationSources.NEW_DISPUTE_AGAINST_REPORTER
+                    #     )
+                    #     new_dispute_against_reporter_notification_task.add_done_callback(
+                    #         lambda future_obj: notification_task_callback(
+                    #             msg=f"New Dispute Event against Reporter",
+                    #             notification_service_results=notification_service_results,
+                    #             notification_source=NotificationSources.NEW_DISPUTE_AGAINST_REPORTER
+                    #         )
+                    #     )
+                    msg =(
+                        f"❕NEW DISPUTE EVENT❕\n"
+                        f"\nCheck the Dashboard and VOTE. Otherwise you risk forfeiting staking rewards!\n\n"
+                        f"- Chain ID: {new_dispute.chain_id}\n"
+                        f"- Dispute ID: {new_dispute.dispute_id}\n"
+                        f"- Reporter: {new_dispute.reporter}\n"
+                        f"- Disputer: {new_dispute.initiator}\n"
+                        f"- Start date: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(new_dispute.startDate))}"
+                        f" (Timestamp: {new_dispute.startDate})\n"
+                        f"- Vote round: {new_dispute.voteRound}\n"
+                        f"**Vote here:** {get_dashboard_url(str(new_dispute.chain_id), 'vote')}"
+
+                    )
+                    new_dispute_even_alert_sent.add(new_dispute.tx_hash)
+                    logger.debug(f'new tx hash added to set{new_dispute.tx_hash}')
+                    send_discord_msg(msg)
                     continue
 
                 try:
@@ -245,7 +350,7 @@ async def start(
                     continue
                 displayed_events.add(new_report.tx_hash)
 
-                # Refesh
+                # Refresh
                 clear_console()
                 print_title_info()
 
@@ -305,6 +410,7 @@ async def start(
                 df["Value"] = df["Value"].apply(format_values)
                 print(df.to_markdown(index=False), end="\r")
                 df.to_csv("table.csv", mode="a", header=False)
+                click.echo("\n" + 204 * '_')
                 # reset config to clear object attributes that were set during loop
                 disp_cfg = AutoDisputerConfig(is_disputing=is_disputing, confidence_flag=confidence_threshold)
 
@@ -321,7 +427,6 @@ async def update_reporters_pls_balance(
     for reporter in reporters:
         if reporter in excluded_addresses:
             if not warning_sent:
-                print("Reporters' addresses to monitor token balance not set. Check .env to edit/add them.")
                 warning_sent = True
             continue
         balance = await get_pls_balance(telliot_config, reporter)
@@ -441,6 +546,123 @@ def alert_on_disputer_balances_threshold(
         )
         token_balance_alert(msg)
         disputer_balances[asset] = (balance, True)
+
+async def update_reporters_last_report(
+    telliot_config: TelliotConfig,
+    reporters,
+    reporters_not_reporting_threshold):
+    """
+    Checks the last reported time for each reporter and sends alerts if they haven't reported within the threshold.
+
+    Args:
+        telliot_config: TelliotConfig
+            reporters list[str]
+            reporters_not_reporting_threshold list[int]
+    """
+    global reporter_stopped_alert_sent
+    if not reporters or not reporters_not_reporting_threshold:
+        print("Error: 'REPORTERS' or 'NO_REPORTING_THRESHOLD' not found in .env file.")
+        logger.error("Error: 'REPORTERS' or 'NO_REPORTING_THRESHOLD' not found in .env file.")
+        return
+
+    if len(reporters) != len(reporters_not_reporting_threshold):
+        print("Error: The number of reporters and thresholds for when not reporting must match. Check .env")
+        logger.error("Error: The number of reporters and thresholds for when not reporting must match. Check .env")
+        return
+
+    for i in range(len(reporters)):
+        wallet_address = reporters[i]
+        time_threshold = reporters_not_reporting_threshold[i]
+
+        if wallet_address == "0x0000000000000000000000000000000000000000":
+            continue # Skip check if the wallet is the default value
+
+        current_time = int(time.time())  # gets a fresh timestamp for calcs
+        last_report = await get_last_report(telliot_config, wallet_address)
+        if last_report == 0:
+            logger.info(f'Error in get_last_report for {wallet_address}.')
+            continue
+        if last_report < current_time:
+            time_since_report = current_time - last_report
+        else:
+            logger.info(f'Timestamp for {wallet_address} in the future.')
+            continue
+
+        if time_since_report > time_threshold:
+            if wallet_address not in reporter_stopped_alert_sent:
+                msg = (
+                    f"\n❗Reporter may have stopped❗\n"
+                    f"**{wallet_address}** has not reported in: "
+                    f"{time_since_report} seconds. \n**Last report was:** "
+                    f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(last_report))} (Timestamp: {last_report}).\n"
+                    f"**Threshold set to send alert:** {time_threshold} seconds without a new report."
+                )
+                send_discord_msg(msg)
+                reporter_stopped_alert_sent.add(wallet_address)  # Add wallet to the set after sending the alert
+        else:
+            # If the reporter has reported recently, remove them from the alert set
+            if wallet_address in reporter_stopped_alert_sent:
+                reporter_stopped_alert_sent.remove(wallet_address)
+
+
+async def update_queryid_last_report(
+        telliot_config: TelliotConfig,
+        query_ids: list[str],
+        queryids_unreported_threshold: list[int]):
+    """
+    Checks the last reported time for each queryIDs and sends alerts if they were not reported within threshold.
+
+    Args:
+        telliot_config: TelliotConfig
+            query_ids: list[str]
+            queryids_unreported_threshold: list[int]
+    """
+    global queryids_unreported_alert_sent
+    if not query_ids or not queryids_unreported_threshold:
+        print("Error: 'QUERY_IDS' or 'QUERYID_LAST_REPORT_THRESHOLD' not found in .env file.")
+        logger.error("Error: 'QUERY_IDS' or 'QUERYID_LAST_REPORT_THRESHOLD' not found in .env file.")
+        return
+
+    if len(query_ids) != len(queryids_unreported_threshold):
+        print("Error: The number of values in QUERY_IDS and QUERYID_LAST_REPORT_THRESHOLD must match. Check .env")
+        logger.error("Error: The number of values in QUERY_IDS and QUERYID_LAST_REPORT_THRESHOLD must match. Check .env")
+        return
+
+    for i in range(len(query_ids)):
+        qid_address = query_ids[i]
+        time_threshold = queryids_unreported_threshold[i]
+
+        # Skip check if the queryID is the default value
+        if qid_address == "0x00000000000000000000000000000000000000000000000000000000000000000":
+            continue
+
+        current_time = int(time.time())  # gets a fresh timestamp for calcs
+        last_report = await get_queryid_last_timestamp(telliot_config, qid_address, current_time)
+        if last_report == 0:
+            logger.info(f'Error in get_queryid_last_timestamp for {qid_address}.')
+            continue
+        if last_report < current_time:
+            time_since_report = current_time - last_report
+        else:
+            logger.info(f'Timestamp for {qid_address} in the future.')
+            continue
+
+        if time_since_report > time_threshold:
+            if qid_address not in queryids_unreported_alert_sent:
+                msg = (
+                    f"\n❗QueryID Alert❗\n"
+                    f"No new reports for:\n"
+                    f"**{qid_address}** in: "
+                    f"{time_since_report} seconds. \n**Last report was:** "
+                    f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(last_report))} (Timestamp: {last_report}).\n"
+                    f"**Threshold set to send alert:** {time_threshold} seconds without a new report."
+                )
+                send_discord_msg(msg)
+                queryids_unreported_alert_sent.add(qid_address)  # Add wallet to the set after sending the alert
+        else:
+            # If the reporter has reported recently, remove them from the alert set
+            if qid_address in queryids_unreported_alert_sent:
+                queryids_unreported_alert_sent.remove(qid_address)
 
 if __name__ == "__main__":
     main()
