@@ -58,7 +58,7 @@ if "0x00000000000000000000000000000000000000000000000000000000000000000" in quer
         logger.info("One or more queryIDs to monitor is the default '0x000...' Check .env in telliot-feeds folder to edit/add them IF you want these alerts.")
         print("One or more queryIDs to monitor is the default '0x000...'\nLeave as is or edit .env inside /telliot-feeds if you want these alerts.\n")
 
-#get thresholds, in seconds, to check if a queryID was reported or not in X
+#get thresholds, in seconds, to check if there's a new report to desired queryIDs
 queryids_unreported_threshold: list[int] = get_queryids_thresholds()
 
 #set with reporter alerts sent so not to send duplicates
@@ -291,31 +291,7 @@ async def start(
                         cfg=cfg,
                         log=event
                     )
-                    #TODO: prob not need these too, since we don't use notification service
 
-                    # if new_dispute.reporter in reporters:
-                    #     subject = f"DVM ALERT ({os.getenv('ENV_NAME', 'default')}) - New Dispute against Reporter {new_dispute.reporter}"
-                    #     msg = format_new_dispute_message(new_dispute)
-                    #     new_dispute_against_reporter_notification_task = create_async_task(
-                    #         handle_notification_service,
-                    #         subject=subject,
-                    #         msg=msg,
-                    #         notification_service=notification_service,
-                    #         sms_message_function=lambda notification_source: dispute_alert(f"{subject}\n{msg}",
-                    #                                                                        recipients, from_number,
-                    #                                                                        notification_source),
-                    #         ses=ses,
-                    #         slack=slack,
-                    #         notification_service_results=notification_service_results,
-                    #         notification_source=NotificationSources.NEW_DISPUTE_AGAINST_REPORTER
-                    #     )
-                    #     new_dispute_against_reporter_notification_task.add_done_callback(
-                    #         lambda future_obj: notification_task_callback(
-                    #             msg=f"New Dispute Event against Reporter",
-                    #             notification_service_results=notification_service_results,
-                    #             notification_source=NotificationSources.NEW_DISPUTE_AGAINST_REPORTER
-                    #         )
-                    #     )
                     msg =(
                         f"❕NEW DISPUTE EVENT❕\n"
                         f"\nCheck the Dashboard and VOTE. Otherwise you risk forfeiting staking rewards!\n\n"
