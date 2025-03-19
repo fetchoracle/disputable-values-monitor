@@ -4,6 +4,7 @@ import logging
 import warnings
 from time import sleep
 import time
+import sys
 
 from decimal import *
 import os
@@ -51,6 +52,11 @@ if "0x0000000000000000000000000000000000000000" in reporters:
 
 #get thresholds, in seconds, to check if a reporter has reported or not in X
 reporters_not_reporting_threshold: list[int] = get_reporters_thresholds()
+if len(reporters) != len(reporters_not_reporting_threshold):
+    msg = "Error: The number of reporters and thresholds for them must match. Check .env"
+    logger.error(msg)
+    print(msg)
+    sys.exit(1)
 
 #get queryIDs to monitor the last time they were reported
 query_ids: list[str] = get_queryids()
@@ -60,6 +66,12 @@ if "0x00000000000000000000000000000000000000000000000000000000000000000" in quer
 
 #get thresholds, in seconds, to check if there's a new report to desired queryIDs
 queryids_unreported_threshold: list[int] = get_queryids_thresholds()
+
+if len(query_ids) != len(queryids_unreported_threshold):
+    msg = "Error: The number of queryIDs and thresholds for them must match. Check .env"
+    logger.error(msg)
+    print(msg)
+    sys.exit(1)
 
 #set with reporter alerts sent so not to send duplicates
 reporter_stopped_alert_sent = set()
