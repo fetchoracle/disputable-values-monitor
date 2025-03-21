@@ -35,13 +35,13 @@ from web3.middleware import geth_poa_middleware
 from web3.types import LogReceipt
 
 from disputable_values_monitor import ALWAYS_ALERT_QUERY_TYPES
-from disputable_values_monitor import NEW_REPORT_ABI
+from disputable_values_monitor import NEW_REPORT_ABI, NEW_DISPUTE_ABI
 from disputable_values_monitor.discord import send_discord_msg
 from disputable_values_monitor.utils import are_all_attributes_none
 from disputable_values_monitor.utils import disputable_str
 from disputable_values_monitor.utils import get_logger
 from disputable_values_monitor.utils import get_tx_explorer_url
-from disputable_values_monitor.utils import NewReport
+from disputable_values_monitor.utils import NewReport,NewDispute
 
 import os
 from dotenv import load_dotenv
@@ -345,7 +345,7 @@ async def chain_events(
                 endpoint.connect()
                 w3 = endpoint.web3
             except (IndexError, ValueError) as e:
-                logger.error(f"Unable to connect to endpoint on chain_id {chain_id}: {e}")
+                logger.error(f"chain_events: Unable to connect to endpoint on chain_id {chain_id}: {e}")
                 continue
             events_loop.append(log_loop(w3, chain_id, address, topic, inital_block_offset))
     events: List[List[tuple[int, Any]]] = await asyncio.gather(*events_loop)
@@ -364,10 +364,11 @@ async def get_events(
         if endpoint.url.endswith("{INFURA_API_KEY}"):
             continue
         chain_id = endpoint.chain_id
+        logger.debug(f"get_events: chain_id = {chain_id}")
         try:
             endpoint.connect()
         except Exception as e:
-            logger.warning(f"unable to connect to endpoint for chain_id {chain_id}: {e}")
+            logger.warning(f"get_events: unable to connect to endpoint for chain_id {chain_id}: {e}")
             continue
 
         w3 = endpoint.web3
@@ -419,6 +420,45 @@ def get_source_from_data(query_data: bytes) -> Optional[DataSource]:
     return source
 
 
+async def parse_new_dispute_event(
+        cfg: TelliotConfig,
+        log: LogReceipt
+) -> Optional[NewDispute]:
+    chain_id = cfg.main.chain_id
+    endpoint = cfg.endpoints.find(chain_id=chain_id)[0]
+
+    new_dispute = NewDispute()
+
+    if not endpoint:
+        logger.error(f"Unable to find a suitable endpoint for chain_id {chain_id}")
+        return None
+
+    try:
+        endpoint.connect()
+        w3 = endpoint.web3
+    except ValueError as e:
+        logger.error(f"Unable to connect to endpoint on chain_id {chain_id}: {e}")
+        return None
+
+    codec = w3.codec
+    event_data = get_event_data(codec, NEW_DISPUTE_ABI, log)
+
+    new_dispute.tx_hash = event_data.transactionHash.hex()
+    new_dispute.chain_id = chain_id
+    new_dispute.dispute_id = event_data.args._disputeId
+    new_dispute.reporter = event_data.args._reporter
+    new_dispute.query_id = "0x" + event_data.args._queryId.hex()
+    new_dispute.initiator = event_data.args._initiator
+    new_dispute.timestamp = event_data.args._timestamp
+    new_dispute.startDate = event_data.args._startDate
+    new_dispute.voteRound = event_data.args._voteRound
+    new_dispute.fee = event_data.args._fee
+    new_dispute.voteRoundLength = event_data.args._voteRoundLength
+    new_dispute.link = get_tx_explorer_url(tx_hash=new_dispute.tx_hash, cfg=cfg)
+    new_dispute.blockNumber = event_data.blockNumber
+
+    return new_dispute
+
 async def parse_new_report_event(
     cfg: TelliotConfig,
     log: LogReceipt,
@@ -442,7 +482,7 @@ async def parse_new_report_event(
             endpoint.connect()
             w3 = endpoint.web3
         except ValueError as e:
-            logger.error(f"Unable to connect to endpoint on chain_id {chain_id}: {e}")
+            logger.error(f"parse_new_report_event: Unable to connect to endpoint on chain_id {chain_id}: {e}")
             return None
 
         codec = w3.codec
@@ -575,7 +615,7 @@ def get_block_number_at_timestamp(cfg: TelliotConfig, timestamp: int) -> Any:
         endpoint = cfg.get_endpoint()
         endpoint.connect()
     except ValueError as e:
-        logger.error(f"Unable to connect to endpoint on chain_id {cfg.main.chain_id}: {e}")
+        logger.error(f"get_block_number_at_timestamp: Unable to connect to endpoint on chain_id {cfg.main.chain_id}: {e}")
         return None
 
     w3 = endpoint.web3
@@ -644,3 +684,45 @@ async def get_pls_balance(cfg: TelliotConfig, address: str) -> Optional[Decimal]
     balance_wei = w3.eth.getBalance(address)
     balance = Decimal(w3.fromWei(balance_wei, 'ether'))
     return balance
+    
+async def get_last_report(cfg: TelliotConfig, address: str) -> int:
+    """ Get the last time a reporter from .env has reported"""
+    #gets contract info
+    try:
+        contract = get_contract_token_alerts(cfg, account=(int(os.getenv("NETWORK_ID", "943"))), name="tellor360-oracle")
+    except Exception as e:
+        logger.error(f"Error getting contract info for get_last_report: {e}")
+        return 0 
+
+    #get staker info to get last report
+    try:
+        last_report, status = await contract.read("getStakerInfo", Web3.toChecksumAddress(address))
+        logger.debug(f'{last_report[4]}')
+        if not status.ok:
+            logger.warning(f"Status not ok for {address} last report. Status: {status}")
+            return 0
+        return (last_report[4])
+    except Exception as e:
+        logger.error(f"Error getting last report for address {address}: {e}")
+        return 0
+
+async def get_queryid_last_timestamp(cfg: TelliotConfig, qid_address: str, timestamp: int) -> int:
+    """ Get the last time a queryID from .env was submitted"""
+    #gets contract info
+    try:
+        contract = get_contract_token_alerts(cfg, account=(int(os.getenv("NETWORK_ID", "943"))), name="tellor360-oracle")
+    except Exception as e:
+        logger.error(f"Error getting contract info for get_queryid_last_timestamp: {e}")
+        return 0
+
+    #call getDataBefore to check when was the last submission for the queryID
+    try:
+        last_report, status = await contract.read("getDataBefore", qid_address, timestamp)
+        logger.debug(f'Last submission: {qid_address}: {last_report[2]}')
+        if not status.ok:
+            logger.warning(f"Status not ok for {qid_address} last report. Status: {status}")
+            return 0
+        return last_report[2]
+    except Exception as e:
+        logger.error(f"Error getting last report for qid_address {qid_address}: {e}")
+        return 0

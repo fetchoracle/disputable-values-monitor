@@ -42,7 +42,26 @@ class Topics:
     NEW_PROPOSED_ORACLE_ADDRESS: str = (
         "0x8fe6b09081e9ffdaf91e337aba6769019098771106b34b194f1781b7db1bf42b"  # oracle.NewProposedOracleAddress
     )
+    # Keccak256("NewDispute(uint256,bytes32,uint256,address,address,uint256,uint256,uint256,uint256)")
+    NEW_DISPUTE: str = "0xfbfeca72a80efb0d1aabf7f937aaec719fa5c81548a4ade65b40ecdec0afca4e"
 
+@dataclass
+class NewDispute:
+    """NewDispute event."""
+
+    tx_hash: str = ""
+    timestamp: int = 0
+    reporter: str = ""
+    query_id: str = ""
+    dispute_id: int = 0
+    initiator: str = ""
+    chain_id: int = 0
+    link: str = ""
+    blockNumber: int = 0
+    startDate: int = 0
+    voteRound: int = 0
+    fee: int = 0
+    voteRoundLength: int = 0
 
 @dataclass
 class NewReport:
@@ -113,7 +132,7 @@ def get_logger(name: str) -> logging.Logger:
     fh.setFormatter(formatter)
     logger = logging.getLogger(name)
     logger.addHandler(fh)
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
     return logger
 
 
@@ -152,6 +171,19 @@ def get_env_reporters_balance_threshold(env_variable_name: str):
 def get_reporters():
     reporters = [reporter.strip() for reporter in os.getenv('REPORTERS', "").split(',')]
     return [Web3.toChecksumAddress(reporter) for reporter in reporters if reporter != ""]
+
+def get_reporters_thresholds():
+    thresholds = [int(t.strip()) for t in os.getenv('NO_REPORTING_THRESHOLD', "").split(",")]
+    return [threshold for threshold in thresholds if threshold != ""]
+
+def get_queryids():
+    queryids = [queryid.strip() for queryid in os.getenv('QUERY_IDS', "").split(',')]
+    return [queryid for queryid in queryids if queryid != ""]
+
+def get_queryids_thresholds():
+    thresholds = [int(t.strip()) for t in os.getenv('QUERYID_LAST_REPORT_THRESHOLD', "").split(",")]
+    return [threshold for threshold in thresholds if threshold != ""]
+
 
 def create_async_task(function, *args, **kwargs):
     return asyncio.create_task(function(*args, **kwargs))
