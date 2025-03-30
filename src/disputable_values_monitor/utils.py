@@ -78,6 +78,7 @@ class NewReport:
     query_id: str = ""
     disputable: Optional[bool] = None
     status_str: str = ""
+    disp_info: str = ""
 
 
 def disputable_str(disputable: Optional[bool], query_id: str) -> str:
