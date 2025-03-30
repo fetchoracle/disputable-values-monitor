@@ -26,6 +26,7 @@ from telliot_feeds.feeds import CATALOG_FEEDS
 from telliot_feeds.feeds import DATAFEED_BUILDER_MAPPING
 from telliot_feeds.queries.abi_query import AbiQuery
 from telliot_feeds.queries.json_query import JsonQuery
+from telliot_feeds.queries.price.spot_price import SpotPrice
 from telliot_feeds.queries.query import OracleQuery
 from telliot_feeds.queries.query_catalog import query_catalog
 from web3 import Web3
@@ -104,7 +105,7 @@ class MonitoredFeed(Base):
         self,
         cfg: TelliotConfig,
         reported_val: Reportable,
-    ) -> Optional[bool]:
+    ) -> Union[None, bool, tuple[bool, str]]:
         """Check if the reported value is disputable."""
         if reported_val is None:
             logger.error("Need reported value to check disputability")
@@ -158,7 +159,40 @@ class MonitoredFeed(Base):
                     logger.error("Please set a threshold amount to measure percent difference")
                     return None
                 percent_diff: float = (reported_val - trusted_val) / trusted_val
-                return float(abs(percent_diff)) >= self.threshold.amount
+
+                #loggin disputable info
+                source_details = f"Type: {type(self.feed.source).__name__}"
+                if hasattr(self.feed.source, 'algorithm'):
+                    source_details += f", Algorithm: {self.feed.source.algorithm}"
+                if hasattr(self.feed.source, 'sources') and isinstance(self.feed.source.sources, list):
+                    #Number of sources used
+                    source_details += f", Sub-sources: {len(self.feed.source.sources)}"
+
+                # Prepare query details based on type
+                if isinstance(self.feed.query, SpotPrice):
+                    #Specific format for SpotPrice
+                    query_details = (
+                        f"Query Type: SpotPrice\n"
+                        f"  Asset: {self.feed.query.asset}\n"
+                        f"  Currency: {self.feed.query.currency}"
+                    )
+                else:
+                    #Generic format for other query types
+                    query_details = (
+                        f"Query Type: {type(self.feed.query).__name__}\n"
+                        f"  Query Info: {self.feed.query}"
+                    )
+                disp_info = (
+                    f"Disputable Value Check:\n"
+                    f"  {query_details}\n"
+                    f"  Source: {source_details}\n"
+                    f"  Reported Value: {float(reported_val):.8f}\n"
+                    f"  Trusted Value: {float(trusted_val):.8f}\n"
+                    f"  Percent Diff: {abs(percent_diff):.4%}\n"
+                    f"  Threshold: {self.threshold.amount:.4%}"
+                )
+                logger.info(disp_info)
+                return float(abs(percent_diff)) >= self.threshold.amount, disp_info
 
             elif self.threshold.metric == Metrics.Range:
 
@@ -502,6 +536,7 @@ async def parse_new_report_event(
     new_report.submission_timestamp = event_data.args._time  # in unix time
     new_report.asset = getattr(q, "asset", "N/A")
     new_report.currency = getattr(q, "currency", "N/A")
+    new_report.disp_info = ""
 
     try:
         new_report.value = q.value_type.decode(event_data.args._value)
@@ -590,7 +625,7 @@ async def parse_new_report_event(
 
         monitored_feed = MonitoredFeed(feed, threshold)
 
-    disputable = await monitored_feed.is_disputable(cfg, new_report.value)
+    disputable, disp_info = await monitored_feed.is_disputable(cfg, new_report.value)
     if disputable is None:
 
         if see_all_values:
@@ -605,6 +640,7 @@ async def parse_new_report_event(
     else:
         new_report.status_str = disputable_str(disputable, new_report.query_id)
         new_report.disputable = disputable
+        new_report.disp_info = disp_info
 
         return new_report
 
