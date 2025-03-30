@@ -82,9 +82,9 @@ def generate_alert_msg(disputable: bool, new_report: str) -> str:
     includes a link to a relevant expolorer."""
 
     if disputable:
-        return (f"\n**DISPUTABLE VALUE**\n{new_report.link}\nCheck latest reports here: {fetch_dashboard['reporter_logs']}\n"
-        f"Initiate a dispute on <12h old reports here: {fetch_dashboard['submit_dispute']}\n"
-        f"Report: {new_report.asset}/{new_report.currency}: {new_report.value}")
+        return (f"**DISPUTABLE VALUE**\n\n{new_report.link}\nCheck latest reports here: {fetch_dashboard['reporter_logs']}\n"
+        f"Initiate a dispute on <12h old reports here: {fetch_dashboard['submit_dispute']}\n\n"
+        f"{new_report.disp_info}")
     else:
         return (f"\n**NEW VALUE**\n{new_report.link}\nCheck latest reports here {fetch_dashboard['reporter_logs']}"
         f"Report: {new_report.asset}/{new_report.currency}: {new_report.value}")
