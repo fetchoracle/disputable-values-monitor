@@ -351,10 +351,10 @@ async def start(
                     success_msg = await dispute(cfg, disp_cfg, account, new_report)
                     if success_msg:
                         msg = (
-                               f"**Value disputed!**\n" 
+                               f"**! Value disputed !**\n\n"
+                               f"{new_report.disp_info}\n\n"
                                f"Check Fetch Dashboard to vote on it: {fetch_dashboard['vote']}\n"
                                f"{success_msg}\n"
-                               f"{new_report.asset}/{new_report.currency}: {new_report.value}"
                            )
                         dispute_alert(msg)
 
